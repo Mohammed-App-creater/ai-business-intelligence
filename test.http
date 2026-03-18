@@ -1,0 +1,12 @@
+
+GET http://localhost:8000/
+
+
+###
+POST http://localhost:8000/chat
+Content-Type: application/json
+
+{
+  "business_id": "salon_123",
+  "question": "Why did my revenue decrease this month?"
+}
