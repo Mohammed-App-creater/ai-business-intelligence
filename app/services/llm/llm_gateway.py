@@ -10,28 +10,35 @@ Responsibilities:
   - Build LLMRequest and delegate to LLMClient
   - Return a clean LLMResponse to call sites
 
+Two calling styles are supported:
+
+  # 1. Raw strings — when you've already built the prompts yourself
+  response = await gateway.call(
+      use_case=UseCase.RAG_CHAT,
+      system=system_prompt,
+      user=user_prompt,
+      business_id="salon_123",
+  )
+
+  # 2. Typed data — gateway builds the prompt automatically (preferred)
+  response = await gateway.call_with_data(
+      use_case=UseCase.RAG_CHAT,
+      data=rag_chat_data,        # RagChatData | ClassifierData | DocGenData
+      business_id="salon_123",
+  )
+
 Call sites (query_analyzer, RAG pipeline, ETL doc generation) only
 import and use LLMGateway — they never touch LLMClient or providers directly.
-
-Usage
------
-    gateway = LLMGateway.from_env()   # reads LLM_PROVIDER env var
-
-    response = await gateway.call(
-        use_case=UseCase.RAG_CHAT,
-        system=system_prompt,
-        user=user_prompt,
-        business_id="salon_123",
-    )
 """
 from __future__ import annotations
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Union
 
 from .llm_client import LLMClient
 from .types import (
+    LLMQuotaExceededError,
     LLMRequest,
     LLMResponse,
     OutputMode,
@@ -77,18 +84,24 @@ OUTPUT_MODE_MAP: dict[UseCase, OutputMode] = {
 # ---------------------------------------------------------------------------
 
 MAX_TOKENS_MAP: dict[UseCase, int] = {
-    UseCase.CLASSIFIER:     256,    # Short classification response
-    UseCase.RAG_CHAT:       1_000,  # Full structured JSON answer
-    UseCase.DOC_GENERATION: 512,    # Narrative summary paragraph
-    UseCase.AGENT:          2_000,  # Multi-step reasoning (V2)
+    UseCase.CLASSIFIER:     256,
+    UseCase.RAG_CHAT:       1_000,
+    UseCase.DOC_GENERATION: 512,
+    UseCase.AGENT:          2_000,
 }
 
 # ---------------------------------------------------------------------------
-# Per-tenant daily token quota (total tokens across all use cases)
-# Set to None to disable quota enforcement (e.g. for ETL jobs)
+# Per-tenant daily token quota
 # ---------------------------------------------------------------------------
 
 DEFAULT_DAILY_TOKEN_QUOTA: Optional[int] = 50_000
+
+# Type alias for the union of all prompt data classes
+PromptData = Union[
+    "ClassifierData",   # noqa: F821  — imported lazily to avoid circular imports
+    "RagChatData",
+    "DocGenData",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +187,7 @@ class LLMGateway:
         return cls(client, provider, daily_token_quota, quota_store)
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API — style 1: raw strings
     # ------------------------------------------------------------------
 
     async def call(
@@ -187,16 +200,11 @@ class LLMGateway:
         temperature: float = 0.2,
     ) -> LLMResponse:
         """
-        Execute an LLM call for the given use case.
+        Execute an LLM call with pre-built prompt strings.
 
-        Parameters
-        ----------
-        use_case:     Determines model, output mode, and token budget.
-        system:       System prompt string.
-        user:         User turn string.
-        business_id:  Tenant identifier for logging and quota.
-        max_tokens:   Override the default for this use case (optional).
-        temperature:  Override the default temperature (optional).
+        Use this when you need fine-grained control over the prompt,
+        or when calling from a context that already has system/user strings.
+        Prefer call_with_data() for standard use cases.
 
         Raises
         ------
@@ -231,6 +239,68 @@ class LLMGateway:
         return await self._client.call(request)
 
     # ------------------------------------------------------------------
+    # Public API — style 2: typed data objects (preferred)
+    # ------------------------------------------------------------------
+
+    async def call_with_data(
+        self,
+        use_case: UseCase,
+        data: PromptData,
+        business_id: str,
+        max_tokens: Optional[int] = None,
+        temperature: float = 0.2,
+    ) -> LLMResponse:
+        """
+        Execute an LLM call from a typed prompt data object.
+
+        The gateway resolves the correct provider-specific prompt
+        automatically — call sites never import from app.prompts directly.
+
+        Example
+        -------
+            from app.prompts.types import RagChatData
+            from app.services.llm.types import UseCase
+
+            data = RagChatData(
+                business_id="salon_123",
+                business_type="Hair Salon",
+                analysis_period="March 2026",
+                question="What was my best performing service?",
+                revenue=[...],
+            )
+            response = await gateway.call_with_data(UseCase.RAG_CHAT, data, "salon_123")
+
+        Raises
+        ------
+        Same as call().
+        ValueError if use_case has no registered prompt builder.
+        """
+        system, user = self._build_prompt(use_case, data)
+        return await self.call(
+            use_case=use_case,
+            system=system,
+            user=user,
+            business_id=business_id,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    # ------------------------------------------------------------------
+    # Prompt building — internal, provider-aware
+    # ------------------------------------------------------------------
+
+    def _build_prompt(self, use_case: UseCase, data: PromptData) -> tuple[str, str]:
+        """
+        Dispatch to the correct provider+use_case prompt module.
+
+        Imported lazily to avoid circular imports and to keep the gateway
+        usable even if the prompts package hasn't been installed yet
+        (e.g. in unit tests that mock the prompt layer).
+        """
+        from app.prompts import build_prompt
+        return build_prompt(use_case, self._provider, data)
+
+    # ------------------------------------------------------------------
     # Quota enforcement
     # ------------------------------------------------------------------
 
@@ -249,12 +319,9 @@ class LLMGateway:
             return
 
         if used_today >= self._daily_token_quota:
-            from .types import LLMError
             raise LLMQuotaExceededError(
                 f"Tenant {business_id!r} has exceeded daily token quota "
                 f"({used_today}/{self._daily_token_quota})"
             )
 
 
-class LLMQuotaExceededError(Exception):
-    """Tenant has exceeded their daily token quota."""

@@ -116,3 +116,6 @@ class LLMJsonParseError(LLMError):
     def __init__(self, message: str, raw_content: str):
         super().__init__(message)
         self.raw_content = raw_content
+        
+class LLMQuotaExceededError(Exception):
+    """Tenant has exceeded their daily token quota."""
