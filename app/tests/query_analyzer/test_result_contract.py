@@ -39,8 +39,21 @@ REPRESENTATIVE_QUESTIONS = [
 ]
 
 
+class _MockGateway:
+    """Wraps a bare async callable into the gateway interface expected by QueryAnalyzer."""
+    def __init__(self, fn):
+        self._fn = fn
+
+    async def call_with_data(self, use_case, data, business_id):
+        from unittest.mock import MagicMock
+        result = MagicMock()
+        result.content = await self._fn(use_case, business_id)
+        return result
+
+
 async def _analyze(question: str, llm_client=None) -> AnalysisResult:
-    return await QueryAnalyzer(llm_client=llm_client).analyze(question, "test")
+    gateway = _MockGateway(llm_client) if llm_client is not None else None
+    return await QueryAnalyzer(gateway=gateway).analyze(question, "test")
 
 
 # ---------------------------------------------------------------------------

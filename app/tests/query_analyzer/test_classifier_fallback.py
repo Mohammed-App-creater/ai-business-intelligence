@@ -13,10 +13,22 @@ Covers:
   - Custom confidence thresholds control when classifier fires
 """
 import json
+from unittest.mock import MagicMock
 import pytest
 from app.services.query_analyzer import QueryAnalyzer, Route
 
 pytestmark = pytest.mark.asyncio
+
+
+class _MockGateway:
+    """Wraps a bare async callable into the gateway interface expected by QueryAnalyzer."""
+    def __init__(self, fn):
+        self._fn = fn
+
+    async def call_with_data(self, use_case, data, business_id):
+        result = MagicMock()
+        result.content = await self._fn(use_case, business_id)
+        return result
 
 # A question designed to score low on rules (single weak keyword or none)
 # so the classifier is triggered.
@@ -31,18 +43,18 @@ class TestNoClassifier:
 
     async def test_ambiguous_falls_back_to_rag(self):
         """Without a classifier, ambiguous questions must default to RAG."""
-        analyzer = QueryAnalyzer(llm_client=None)
+        analyzer = QueryAnalyzer(gateway=None)
         result = await analyzer.analyze(AMBIGUOUS_QUESTION)
         assert result.route == Route.RAG
 
     async def test_method_is_rules_fallback(self):
-        analyzer = QueryAnalyzer(llm_client=None)
+        analyzer = QueryAnalyzer(gateway=None)
         result = await analyzer.analyze(AMBIGUOUS_QUESTION)
         assert result.method == "rules_fallback"
 
     async def test_high_confidence_rules_skip_classifier(self):
         """High-confidence rule results must never invoke the (absent) classifier."""
-        analyzer = QueryAnalyzer(llm_client=None)
+        analyzer = QueryAnalyzer(gateway=None)
         result = await analyzer.analyze("Why did my revenue decrease this month?")
         assert result.route == Route.RAG
         assert result.method == "rules"
@@ -73,7 +85,7 @@ class TestClassifierRAG:
                 "confidence": 0.88,
                 "reasoning": "Question implies business-specific data."
             })
-        analyzer = QueryAnalyzer(llm_client=_client)
+        analyzer = QueryAnalyzer(gateway=_MockGateway(_client))
         result = await analyzer.analyze(AMBIGUOUS_QUESTION)
         assert result.reasoning == "Question implies business-specific data."
 
@@ -108,7 +120,7 @@ class TestClassifierNotInvoked:
             call_count += 1
             return json.dumps({"route": "DIRECT", "confidence": 0.99, "reasoning": ""})
 
-        analyzer = QueryAnalyzer(llm_client=_spy_client)
+        analyzer = QueryAnalyzer(gateway=_MockGateway(_spy_client))
         await analyzer.analyze("Why did my revenue drop?")
         assert call_count == 0, "Classifier should not be called for high-confidence rules"
 
@@ -120,10 +132,10 @@ class TestClassifierNotInvoked:
             call_count += 1
             return json.dumps({"route": "RAG", "confidence": 0.99, "reasoning": ""})
 
-        analyzer = QueryAnalyzer(llm_client=_spy_client)
+        analyzer = QueryAnalyzer(gateway=_MockGateway(_spy_client))
         await analyzer.analyze("How can salons improve customer retention?")
         assert call_count == 0
-    
+
 
 # ---------------------------------------------------------------------------
 # Classifier failure — safe fallback
@@ -172,7 +184,7 @@ class TestConfidenceThreshold:
             return json.dumps({"route": "RAG", "confidence": 0.8, "reasoning": ""})
 
         # "drop" is a single keyword → rules score 0.60 < threshold 0.70 → classifier fires
-        analyzer = QueryAnalyzer(llm_client=_spy, confidence_threshold=0.70)
+        analyzer = QueryAnalyzer(gateway=_MockGateway(_spy), confidence_threshold=0.70)
         await analyzer.analyze("Tell me about the drop.")
         assert call_count == 1
 
@@ -186,9 +198,8 @@ class TestConfidenceThreshold:
             return json.dumps({"route": "DIRECT", "confidence": 0.99, "reasoning": ""})
 
         # Analyzer without classifier at threshold=1.0; ambiguous → rules_fallback
-        analyzer = QueryAnalyzer(llm_client=None, confidence_threshold=1.0)
+        analyzer = QueryAnalyzer(gateway=None, confidence_threshold=1.0)
         result = await analyzer.analyze("Why did my revenue drop?")
         # Even high-confidence rules (0.95) won't meet threshold=1.0
         assert call_count == 0
         assert result.method == "rules_fallback"
-

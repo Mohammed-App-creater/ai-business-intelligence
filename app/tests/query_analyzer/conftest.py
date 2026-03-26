@@ -2,8 +2,20 @@
 Shared pytest fixtures for Query Analyzer tests.
 """
 import json
+from unittest.mock import MagicMock
 import pytest
 from app.services.query_analyzer import QueryAnalyzer
+
+
+class _MockGateway:
+    """Wraps a bare async callable into the gateway interface expected by QueryAnalyzer."""
+    def __init__(self, fn):
+        self._fn = fn
+
+    async def call_with_data(self, use_case, data, business_id):
+        result = MagicMock()
+        result.content = await self._fn(use_case, business_id)
+        return result
 
 
 # ---------------------------------------------------------------------------
@@ -59,22 +71,22 @@ def make_malformed_llm_client():
 @pytest.fixture
 def analyzer_with_rag_classifier():
     """Analyzer wired to a classifier that always returns RAG."""
-    return QueryAnalyzer(llm_client=make_llm_client("RAG"))
+    return QueryAnalyzer(gateway=_MockGateway(make_llm_client("RAG")))
 
 
 @pytest.fixture
 def analyzer_with_direct_classifier():
     """Analyzer wired to a classifier that always returns DIRECT."""
-    return QueryAnalyzer(llm_client=make_llm_client("DIRECT"))
+    return QueryAnalyzer(gateway=_MockGateway(make_llm_client("DIRECT")))
 
 
 @pytest.fixture
 def analyzer_with_failing_classifier():
     """Analyzer wired to a classifier that always fails."""
-    return QueryAnalyzer(llm_client=make_failing_llm_client())
+    return QueryAnalyzer(gateway=_MockGateway(make_failing_llm_client()))
 
 
 @pytest.fixture
 def analyzer_with_malformed_classifier():
     """Analyzer wired to a classifier that returns malformed JSON."""
-    return QueryAnalyzer(llm_client=make_malformed_llm_client())
+    return QueryAnalyzer(gateway=_MockGateway(make_malformed_llm_client()))
