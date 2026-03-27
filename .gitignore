@@ -5,3 +5,340 @@ __pycache__/
 *.pyo
 *.pyd
 *.db.env
+
+# Ignore logs and temporary files
+
+# =========================
+# Temporary files
+# =========================
+tmp/
+temp/
+*.tmp
+
+# =========================
+# Secrets / Keys
+# =========================
+*.pem
+*.key
+*.crt
+*.env
+*.pyc
+*.pyo
+*.pyd
+
+
+__pycache__/
+*.py[cod]
+
+*.pyc
+
+secrets/
+
+
+# =============================================
+# EXPERT-LEVEL .gitignore for FastAPI + ETL Backend
+# =============================================
+# Tailored for modern Python backends using:
+# • FastAPI (ASGI, Uvicorn, Starlette)
+# • ETL pipelines (Pandas, Polars, PySpark/Dask, SQLAlchemy, Alembic, Airflow, etc.)
+# • Modern tooling: Poetry/uv/pip, Ruff, mypy, pytest, Docker, pre-commit
+#
+# Always commit: .env.example, pyproject.toml, poetry.lock / uv.lock, alembic.ini (without secrets)
+# Never commit: secrets, large data files, local caches, logs
+#
+# Pro tip: Use Git LFS for any unavoidable large files (e.g. models, sample datasets)
+# =============================================
+
+# ============================
+# Python / Bytecode
+# ============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# ============================
+# Packaging & Distribution
+# ============================
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+
+# ============================
+# Virtual Environments & Dependency Managers
+# ============================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+__pypackages__/
+
+# Poetry / uv / PDM
+# (lockfiles SHOULD be committed)
+.pdm.toml
+.pdm-python
+.pdm-build/
+
+# ============================
+# Testing & Coverage
+# ============================
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# =============================================
+# EXPERT-LEVEL .gitignore for FastAPI + ETL Backend
+# =============================================
+# Updated: Added full pytest output / reports section
+# (junit.xml, html reports, test-results/, etc.)
+# =============================================
+
+# ============================
+# Python / Bytecode
+# ============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# ============================
+# Packaging & Distribution
+# ============================
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+*.manifest
+*.spec
+
+# ============================
+# Virtual Environments & Dependency Managers
+# ============================
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+__pypackages__/
+
+# Poetry / uv / PDM
+.pdm.toml
+.pdm-python
+.pdm-build/
+
+# ============================
+# Testing & Coverage (UPDATED with pytest output)
+# ============================
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+
+# ── pytest output / reports ──
+junit.xml
+*.junit.xml
+pytest.xml
+pytest*.xml
+pytest_report.html
+report.html
+test-results/
+results/
+test-output/
+pytest-output/
+html/
+
+# ============================
+# IDE / Editor
+# ============================
+.vscode/
+.idea/
+.spyderproject
+.spyproject
+.ropeproject
+*.swp
+*.swo
+*~
+
+# ============================
+# Logs & Temporary Files
+# ============================
+*.log
+logs/
+log/
+*.tmp
+*.temp
+temp/
+tmp/
+
+# ============================
+# FastAPI / ASGI Specific
+# ============================
+instance/
+
+# ============================
+# ETL / Data Pipeline Specific
+# ============================
+/data/
+/raw/
+/processed/
+/output/
+/staging/
+/archive/
+/cache/
+*.parquet
+*.csv
+*.xlsx
+*.xls
+*.jsonl
+*.avro
+*.orc
+*.feather
+*.pkl
+*.pickle
+*.h5
+*.hdf5
+
+airflow/
+airflow.db
+airflow_logs/
+dagster_home/
+prefect/
+
+.spark-*/
+dask-worker-space/
+*.spark
+
+# ============================
+# Databases & Migrations
+# ============================
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite3-journal
+*.sql.dump
+*.dump
+
+# ============================
+# Docker & Containerization
+# ============================
+docker-compose.override.yml
+docker-compose.*.yml
+
+# ============================
+# Environment Variables (SECURITY FIRST)
+# ============================
+.env*
+!.env.example
+!.env.template
+!.env.*.example
+
+*.pem
+*.key
+*.crt
+credentials.json
+*.gcp
+*.aws
+*.azure
+
+# ============================
+# OS Generated Files
+# ============================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# ============================
+# Documentation & Docs Tools
+# ============================
+docs/_build/
+site/
+.mkdocs.yml.cache
+
+# ============================
+# Pre-commit & Hooks
+# ============================
+.pre-commit-hooks/
+.husky/
+
+# ============================
+# Miscellaneous / Future-Proof
+# ============================
+.ipynb_checkpoints
+*.ipynb
+
+build/
+dist/
+
+# End of file
