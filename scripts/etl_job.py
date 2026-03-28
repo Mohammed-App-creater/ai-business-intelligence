@@ -57,6 +57,7 @@ from scripts.etl.transforms import (
     transform_staff,
     transform_subscriptions,
 )
+from app.services.db.db_pool import DBPool, DBTarget, PGPool, PGTarget
 
 log = logging.getLogger(__name__)
 
@@ -316,8 +317,6 @@ async def run_org(
 
 async def run_all(args: argparse.Namespace) -> None:
     """Main async entry: pools, orgs, tables, logging, teardown."""
-    from app.services.db.db_pool import DBPool, DBTarget, PGPool, PGTarget
-
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
