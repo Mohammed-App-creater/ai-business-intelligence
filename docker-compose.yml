@@ -1,0 +1,32 @@
+version: '3.9'
+
+services:
+  pgvector-db:
+    image: ankane/pgvector:latest
+    container_name: pgvector-db
+    environment:
+      POSTGRES_PASSWORD: vectorpassword
+      POSTGRES_USER: vectoruser
+      POSTGRES_DB: vectordb
+    ports:
+      - "5432:5432"  # default PostgreSQL port for pgvector
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:15
+    container_name: warehouse-postgres
+    environment:
+      POSTGRES_USER: LeoWearhouseUser
+      POSTGRES_PASSWORD: LeoWearhousePassword
+      POSTGRES_DB: LeoWearhouseDB
+    ports:
+      - "5433:5432"  # use different host port to avoid clash
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  pgvector_data:
+  postgres_data:

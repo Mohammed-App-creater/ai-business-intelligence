@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[3]
 WAREHOUSE_SQL_PATH = REPO_ROOT / "infra" / "warehouse_schema.sql"
 
 ANALYTICS_TABLES = (
