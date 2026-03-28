@@ -64,17 +64,21 @@ def minimal_rag_data():
 
 @pytest.fixture
 def full_doc_data():
+    kpi = (
+        "Revenue       : $9,200 (▼ 30% vs $13,100)\n"
+        "Visits        : 150 (▼ 35% vs 230)\n"
+        "Cancel Rate   : 18%\n"
+        "Top staff     : Sarah\n"
+        "Top service   : Facial Treatment\n"
+        "Notes         : Staff member Mia joined this month."
+    )
     return DocGenData(
         business_id="salon_123",
         business_type="Hair Salon",
         period="March 2026",
-        revenue=9200.0,
-        prev_revenue=13100.0,
-        appointments=150,
-        cancellation_rate_pct=18.0,
-        top_service="Facial Treatment",
-        top_staff="Sarah",
-        extra_notes="Staff member Mia joined this month.",
+        doc_domain="revenue",
+        doc_type="monthly_summary",
+        kpi_block=kpi,
     )
 
 
@@ -84,4 +88,7 @@ def minimal_doc_data():
         business_id="salon_123",
         business_type="Hair Salon",
         period="March 2026",
+        doc_domain="revenue",
+        doc_type="monthly_summary",
+        kpi_block="(minimal context)",
     )

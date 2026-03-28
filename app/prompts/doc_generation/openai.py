@@ -3,62 +3,49 @@ prompts/doc_generation/openai.py
 ==================================
 Document generation prompt optimised for OpenAI GPT.
 
-OpenAI-specific choices:
-  - Plain key-value data block, no XML
-  - Direct concise system instruction — GPT needs less scaffolding
-  - Same output expectation: 2-3 sentence prose summary
+Same contract as anthropic.py — receives a pre-formatted KPI block,
+returns a 2-3 sentence observation paragraph (OutputMode.RAW).
 """
 from __future__ import annotations
-
 from ..types import DocGenData
 
 SYSTEM_PROMPT = """\
-You write concise monthly performance summaries for beauty and wellness \
-business owners. Summaries are stored and used to answer future questions.
+You write concise performance summaries for beauty and wellness business owners.
+Summaries are stored and later retrieved to answer owner questions.
 
 Rules:
-- 2-3 sentences maximum.
+- Write exactly 2-3 sentences.
 - Plain language — owner is not a data analyst.
-- Only use the data provided — no advice or recommendations.
-- Lead with the most notable insight.
-- Third person only ("The business..." not "You...").
-- Flowing prose — no bullet points or headers."""
+- Use only the data provided — no invented figures.
+- Lead with the single most notable insight.
+- Third person: "The business..." not "You..."
+- Flowing prose only — no bullet points or headers.
+- No advice or recommendations — observation only."""
 
 
 def build(data: DocGenData) -> tuple[str, str]:
     """
-    Returns (system, user) ready for gateway.call(UseCase.DOC_GENERATION, ...).
+    Returns (system, user) ready for gateway.call_with_data(UseCase.DOC_GENERATION, ...).
     """
+    domain_label = data.doc_domain.replace("_", " ").title()
+    type_label   = data.doc_type.replace("_", " ").title()
+
     lines = [
         f"Business ID   : {data.business_id}",
         f"Business Type : {data.business_type}",
         f"Period        : {data.period}",
+        f"Domain        : {domain_label}",
+        f"Summary Type  : {type_label}",
     ]
-
-    if data.revenue is not None:
-        lines.append(f"Revenue       : ${data.revenue:,.0f}")
-    if data.prev_revenue is not None and data.revenue is not None:
-        change_pct = ((data.revenue - data.prev_revenue) / data.prev_revenue * 100)
-        arrow = "▲" if change_pct >= 0 else "▼"
-        lines.append(
-            f"vs Prev Period: {arrow} {abs(change_pct):.0f}% "
-            f"(${data.prev_revenue:,.0f})"
-        )
-    if data.appointments is not None:
-        lines.append(f"Appointments  : {data.appointments}")
-    if data.cancellation_rate_pct is not None:
-        lines.append(f"Cancel Rate   : {data.cancellation_rate_pct:.0f}%")
-    if data.top_service:
-        lines.append(f"Top Service   : {data.top_service}")
-    if data.top_staff:
-        lines.append(f"Top Staff     : {data.top_staff}")
-    if data.extra_notes:
-        lines.append(f"Notes         : {data.extra_notes}")
+    if data.entity_name:
+        lines.append(f"Entity        : {data.entity_name}")
 
     lines.append("")
+    lines.append(data.kpi_block.strip())
+    lines.append("")
     lines.append(
-        "Write a 2-3 sentence summary of this business period. "
-        "Lead with the most notable insight."
+        f"Write a 2-3 sentence observation about this {domain_label} period. "
+        f"Lead with the most notable insight from the data above."
     )
 
     user = "\n".join(lines)

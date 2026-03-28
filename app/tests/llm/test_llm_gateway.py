@@ -86,12 +86,9 @@ def doc_gen_data():
         business_id="salon_123",
         business_type="Hair Salon",
         period="March 2026",
-        revenue=9_500,
-        prev_revenue=12_000,
-        appointments=87,
-        cancellation_rate_pct=12.0,
-        top_service="Balayage",
-        top_staff="Maria",
+        doc_domain="revenue",
+        doc_type="monthly_summary",
+        kpi_block="Revenue: $9,500\nPrior: $12,000",
     )
 
 

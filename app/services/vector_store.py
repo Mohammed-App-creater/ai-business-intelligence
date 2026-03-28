@@ -273,6 +273,20 @@ SELECT EXISTS(
             found = await conn.fetchval(sql, tenant_id, doc_id)
         return bool(found)
 
+    async def get_doc_metadata(self, tenant_id: str, doc_id: str) -> dict | None:
+        """Return JSON metadata for a row, or None if missing."""
+        sql = """
+SELECT metadata FROM embeddings WHERE tenant_id = $1 AND doc_id = $2
+""".strip()
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(sql, tenant_id, doc_id)
+        if row is None:
+            return None
+        m = row["metadata"]
+        if m is None:
+            return {}
+        return dict(m) if isinstance(m, dict) else {}
+
     def _build_doc_id_filters(
         self,
         tenant_id: str,

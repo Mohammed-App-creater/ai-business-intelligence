@@ -97,18 +97,32 @@ class RagChatData:
 class DocGenData:
     """
     Input for doc_generation prompts.
-    Used by: ETL pipeline to generate human-readable summaries
-    from warehouse rows before embedding into the vector store.
+
+    The Python template in doc_generator.py builds the full KPI block
+    as a pre-formatted string (kpi_block). The LLM only writes the
+    observation paragraph — it never sees raw numbers directly.
+
+    Fields
+    ------
+    business_id   : Tenant identifier (e.g. "42")
+    business_type : Human label (e.g. "Hair Salon")
+    period        : Human-readable period (e.g. "March 2026")
+    doc_domain    : Domain being summarised — 'revenue' | 'staff' |
+                    'services' | 'clients' | 'appointments' |
+                    'expenses' | 'reviews' | 'payments' |
+                    'campaigns' | 'attendance' | 'subscriptions'
+    doc_type      : Document shape — 'monthly_summary' | 'individual' |
+                    'ranking' | 'retention_summary' | 'top_spenders' |
+                    'location_breakdown' | 'daily_trend'
+    kpi_block     : Pre-formatted KPI text built by the Python template.
+                    The LLM writes an observation based on this text.
+    entity_name   : Optional — used when doc_type='individual' to name
+                    the staff member or service being summarised.
     """
     business_id:   str
     business_type: str
     period:        str
-
-    # At least one of the following should be populated
-    revenue:       Optional[float]  = None
-    prev_revenue:  Optional[float]  = None       # for MoM comparison
-    appointments:  Optional[int]    = None
-    cancellation_rate_pct: Optional[float] = None
-    top_service:   Optional[str]    = None
-    top_staff:     Optional[str]    = None
-    extra_notes:   Optional[str]    = None       # any free-form context
+    doc_domain:    str
+    doc_type:      str
+    kpi_block:     str
+    entity_name:   str = ""

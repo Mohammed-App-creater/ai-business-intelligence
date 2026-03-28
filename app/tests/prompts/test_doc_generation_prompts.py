@@ -15,10 +15,10 @@ def _build(provider, data):
 
 class TestDocGenAnthropic:
 
-    def test_business_data_xml_tag_present(self, full_doc_data):
+    def test_kpi_data_xml_tag_present(self, full_doc_data):
         _, user = _build(Provider.ANTHROPIC, full_doc_data)
-        assert "<business_data>" in user
-        assert "</business_data>" in user
+        assert "<kpi_data>" in user
+        assert "</kpi_data>" in user
 
     def test_revenue_in_user_prompt(self, full_doc_data):
         _, user = _build(Provider.ANTHROPIC, full_doc_data)
@@ -49,10 +49,9 @@ class TestDocGenAnthropic:
         _, user = _build(Provider.ANTHROPIC, minimal_doc_data)
         assert user.strip()
 
-    def test_optional_fields_absent_when_none(self, minimal_doc_data):
+    def test_context_block_present(self, minimal_doc_data):
         _, user = _build(Provider.ANTHROPIC, minimal_doc_data)
-        assert "Revenue" not in user
-        assert "Cancel Rate" not in user
+        assert "<context>" in user
 
     def test_system_instructs_prose_not_bullets(self, full_doc_data):
         sys, _ = _build(Provider.ANTHROPIC, full_doc_data)
@@ -74,9 +73,9 @@ class TestDocGenAnthropic:
 
 class TestDocGenOpenAI:
 
-    def test_no_xml_tags(self, full_doc_data):
+    def test_no_kpi_xml_wrapper(self, full_doc_data):
         _, user = _build(Provider.OPENAI, full_doc_data)
-        assert "<business_data>" not in user
+        assert "<kpi_data>" not in user
 
     def test_revenue_in_user_prompt(self, full_doc_data):
         _, user = _build(Provider.OPENAI, full_doc_data)
@@ -98,20 +97,20 @@ class TestDocGenOpenAI:
         _, user = _build(Provider.OPENAI, minimal_doc_data)
         assert user.strip()
 
-    def test_optional_fields_absent_when_none(self, minimal_doc_data):
+    def test_business_id_in_user(self, minimal_doc_data):
         _, user = _build(Provider.OPENAI, minimal_doc_data)
-        assert "Revenue" not in user
+        assert "salon_123" in user
 
 
 class TestDocGenProviderDifferences:
 
-    def test_anthropic_uses_xml_data_block(self, full_doc_data):
+    def test_anthropic_uses_kpi_data_block(self, full_doc_data):
         _, user_a = _build(Provider.ANTHROPIC, full_doc_data)
-        assert "<business_data>" in user_a
+        assert "<kpi_data>" in user_a
 
-    def test_openai_uses_plain_data_block(self, full_doc_data):
+    def test_openai_uses_plain_kpi_block(self, full_doc_data):
         _, user_o = _build(Provider.OPENAI, full_doc_data)
-        assert "<business_data>" not in user_o
+        assert "<kpi_data>" not in user_o
 
     def test_both_render_same_key_values(self, full_doc_data):
         _, user_a = _build(Provider.ANTHROPIC, full_doc_data)
