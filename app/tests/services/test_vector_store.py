@@ -1,16 +1,23 @@
 """
-test_vector_store.py
-====================
-Unit tests for VectorStore — mocked pool / connection, no real DB.
+test_vector_store.py — VectorStore unit tests (mocked asyncpg, no real DB).
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.services.vector_store import VectorStore
+from app.services.vector_store import DOMAINS, DOC_TYPES, VectorStore
+
+TENANT = "42"
+DOC_ID = "42_revenue_monthly_2026_01"
+DOC_DOMAIN = "revenue"
+DOC_TYPE = "monthly_summary"
+TEXT = "Business ID: 42\nMonth: January 2026\nRevenue: $9200"
+EMBEDDING = [0.1] * 1536
+METADATA = {"location_id": 0}
+PERIOD = date(2026, 1, 1)
 
 
 @pytest.fixture
@@ -40,12 +47,34 @@ def store(mock_pool):
     return VectorStore(mock_pool)
 
 
-SAMPLE_TENANT = "42"
-SAMPLE_DOC_ID = "42_monthly_2026_01"
-SAMPLE_DOC_TYPE = "monthly_summary"
-SAMPLE_TEXT = "Business ID: 42\nMonth: January 2026\nRevenue: $9200"
-SAMPLE_EMBEDDING = [0.1] * 1536
-SAMPLE_METADATA = {"period_start": "2026-01-01"}
+# ---------------------------------------------------------------------------
+# _vec
+# ---------------------------------------------------------------------------
+
+
+def test_vec_returns_string():
+    assert isinstance(VectorStore._vec([0.1, 0.2]), str)
+
+
+def test_vec_starts_with_open_bracket():
+    assert VectorStore._vec([0.1]).startswith("[")
+
+
+def test_vec_ends_with_close_bracket():
+    assert VectorStore._vec([0.1]).endswith("]")
+
+
+def test_vec_correct_element_count():
+    result = VectorStore._vec([0.1] * 1536)
+    assert len(result.split(",")) == 1536
+
+
+def test_vec_handles_negative_values():
+    assert "-" in VectorStore._vec([-0.5, 0.5])
+
+
+def test_vec_handles_zero():
+    assert "0.00000000" in VectorStore._vec([0.0])
 
 
 # ---------------------------------------------------------------------------
@@ -54,92 +83,115 @@ SAMPLE_METADATA = {"period_start": "2026-01-01"}
 
 
 @pytest.mark.asyncio
-async def test_upsert_calls_fetchval(store, mock_conn):
-    mock_conn.fetchval.return_value = "some-uuid"
-    result = await store.upsert(
-        SAMPLE_TENANT,
-        SAMPLE_DOC_ID,
-        SAMPLE_DOC_TYPE,
-        SAMPLE_TEXT,
-        SAMPLE_EMBEDDING,
-        SAMPLE_METADATA,
+async def test_upsert_returns_uuid_string(store, mock_conn):
+    mock_conn.fetchval.return_value = "abc-uuid"
+    out = await store.upsert(
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
     )
-    assert result == "some-uuid"
-    assert mock_conn.fetchval.called
+    assert out == "abc-uuid"
 
 
 @pytest.mark.asyncio
-async def test_upsert_sql_contains_on_conflict(store, mock_conn):
+async def test_upsert_sql_has_insert_into_embeddings(store, mock_conn):
     await store.upsert(
-        SAMPLE_TENANT,
-        SAMPLE_DOC_ID,
-        SAMPLE_DOC_TYPE,
-        SAMPLE_TEXT,
-        SAMPLE_EMBEDDING,
-        SAMPLE_METADATA,
-    )
-    sql = mock_conn.fetchval.call_args[0][0]
-    assert "ON CONFLICT" in sql
-
-
-@pytest.mark.asyncio
-async def test_upsert_sql_contains_insert_into_embeddings(store, mock_conn):
-    await store.upsert(
-        SAMPLE_TENANT,
-        SAMPLE_DOC_ID,
-        SAMPLE_DOC_TYPE,
-        SAMPLE_TEXT,
-        SAMPLE_EMBEDDING,
-        SAMPLE_METADATA,
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
     )
     sql = mock_conn.fetchval.call_args[0][0]
     assert "INSERT INTO embeddings" in sql
 
 
 @pytest.mark.asyncio
-async def test_upsert_passes_tenant_id_as_first_param(store, mock_conn):
+async def test_upsert_sql_has_on_conflict(store, mock_conn):
     await store.upsert(
-        SAMPLE_TENANT,
-        SAMPLE_DOC_ID,
-        SAMPLE_DOC_TYPE,
-        SAMPLE_TEXT,
-        SAMPLE_EMBEDDING,
-        SAMPLE_METADATA,
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
     )
-    args = mock_conn.fetchval.call_args[0]
-    assert args[1] == SAMPLE_TENANT
+    sql = mock_conn.fetchval.call_args[0][0]
+    assert "ON CONFLICT" in sql
 
 
 @pytest.mark.asyncio
-async def test_upsert_serializes_embedding_to_vector_string(store, mock_conn):
+async def test_upsert_sql_has_do_update_set(store, mock_conn):
     await store.upsert(
-        SAMPLE_TENANT,
-        SAMPLE_DOC_ID,
-        SAMPLE_DOC_TYPE,
-        SAMPLE_TEXT,
-        SAMPLE_EMBEDDING,
-        SAMPLE_METADATA,
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
     )
-    args = mock_conn.fetchval.call_args[0]
-    embedding_param = args[5]
-    assert isinstance(embedding_param, str)
-    assert embedding_param.startswith("[")
+    sql = mock_conn.fetchval.call_args[0][0]
+    assert "DO UPDATE SET" in sql
 
 
 @pytest.mark.asyncio
-async def test_upsert_none_metadata_defaults_to_empty_json(store, mock_conn):
-    mock_conn.fetchval.return_value = "uuid"
+async def test_upsert_sql_has_returning(store, mock_conn):
     await store.upsert(
-        SAMPLE_TENANT,
-        SAMPLE_DOC_ID,
-        SAMPLE_DOC_TYPE,
-        SAMPLE_TEXT,
-        SAMPLE_EMBEDDING,
-        metadata=None,
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
     )
-    args = mock_conn.fetchval.call_args[0]
-    meta_param = args[6]
-    assert meta_param == "{}"
+    sql = mock_conn.fetchval.call_args[0][0]
+    assert "RETURNING" in sql
+
+
+@pytest.mark.asyncio
+async def test_upsert_first_param_is_tenant_id(store, mock_conn):
+    await store.upsert(
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
+    )
+    assert mock_conn.fetchval.call_args[0][1] == TENANT
+
+
+@pytest.mark.asyncio
+async def test_upsert_embedding_serialized_to_string(store, mock_conn):
+    await store.upsert(
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
+    )
+    emb_arg = mock_conn.fetchval.call_args[0][6]
+    assert isinstance(emb_arg, str)
+    assert emb_arg.startswith("[")
+
+
+@pytest.mark.asyncio
+async def test_upsert_none_metadata_becomes_empty_json_object(store, mock_conn):
+    mock_conn.fetchval.return_value = "id"
+    await store.upsert(
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=None,
+    )
+    meta_arg = mock_conn.fetchval.call_args[0][8]
+    assert meta_arg == "{}"
+
+
+@pytest.mark.asyncio
+async def test_upsert_none_period_start_passes_none(store, mock_conn):
+    mock_conn.fetchval.return_value = "id"
+    await store.upsert(
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=None, metadata=METADATA,
+    )
+    period_arg = mock_conn.fetchval.call_args[0][7]
+    assert period_arg is None
+
+
+@pytest.mark.asyncio
+async def test_upsert_sql_includes_doc_domain(store, mock_conn):
+    await store.upsert(
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
+    )
+    sql = mock_conn.fetchval.call_args[0][0]
+    assert "doc_domain" in sql
+
+
+@pytest.mark.asyncio
+async def test_upsert_sql_includes_period_start(store, mock_conn):
+    await store.upsert(
+        TENANT, DOC_ID, DOC_DOMAIN, DOC_TYPE, TEXT, EMBEDDING,
+        period_start=PERIOD, metadata=METADATA,
+    )
+    sql = mock_conn.fetchval.call_args[0][0]
+    assert "period_start" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -149,36 +201,36 @@ async def test_upsert_none_metadata_defaults_to_empty_json(store, mock_conn):
 
 def _doc(**kwargs):
     base = {
-        "tenant_id": SAMPLE_TENANT,
-        "doc_id": SAMPLE_DOC_ID,
-        "doc_type": SAMPLE_DOC_TYPE,
-        "chunk_text": SAMPLE_TEXT,
-        "embedding": SAMPLE_EMBEDDING,
-        "metadata": SAMPLE_METADATA,
+        "tenant_id": TENANT,
+        "doc_id": DOC_ID,
+        "doc_domain": DOC_DOMAIN,
+        "doc_type": DOC_TYPE,
+        "chunk_text": TEXT,
+        "embedding": EMBEDDING,
+        "period_start": PERIOD,
+        "metadata": METADATA,
     }
     base.update(kwargs)
     return base
 
 
 @pytest.mark.asyncio
-async def test_upsert_many_returns_count_of_documents(store, mock_conn):
-    mock_conn.fetchval.side_effect = ["u1", "u2", "u3"]
-    docs = [_doc(doc_id="a"), _doc(doc_id="b"), _doc(doc_id="c")]
-    n = await store.upsert_many(docs)
-    assert n == 3
-
-
-@pytest.mark.asyncio
-async def test_upsert_many_empty_list_returns_zero(store):
+async def test_upsert_many_empty_returns_zero(store):
     assert await store.upsert_many([]) == 0
 
 
 @pytest.mark.asyncio
-async def test_upsert_many_continues_on_single_doc_failure(store, mock_conn):
-    mock_conn.fetchval.side_effect = [RuntimeError("boom"), "ok-uuid"]
+async def test_upsert_many_returns_success_count(store, mock_conn):
+    mock_conn.fetchval.side_effect = ["a", "b", "c"]
+    docs = [_doc(doc_id="1"), _doc(doc_id="2"), _doc(doc_id="3")]
+    assert await store.upsert_many(docs) == 3
+
+
+@pytest.mark.asyncio
+async def test_upsert_many_continues_on_single_failure(store, mock_conn):
+    mock_conn.fetchval.side_effect = [RuntimeError("x"), "ok"]
     docs = [_doc(doc_id="bad"), _doc(doc_id="good")]
-    n = await store.upsert_many(docs)
-    assert n == 1
+    assert await store.upsert_many(docs) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -189,74 +241,151 @@ async def test_upsert_many_continues_on_single_doc_failure(store, mock_conn):
 @pytest.mark.asyncio
 async def test_search_returns_list(store, mock_conn):
     mock_conn.fetch.return_value = []
-    result = await store.search(SAMPLE_TENANT, SAMPLE_EMBEDDING, top_k=5)
-    assert isinstance(result, list)
+    out = await store.search(TENANT, EMBEDDING, top_k=5)
+    assert isinstance(out, list)
 
 
 @pytest.mark.asyncio
-async def test_search_filters_by_tenant_id(store, mock_conn):
-    await store.search(SAMPLE_TENANT, SAMPLE_EMBEDDING, top_k=5)
+async def test_search_always_filters_by_tenant_id(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5)
     sql = mock_conn.fetch.call_args[0][0]
-    assert "$1" in sql
-    assert mock_conn.fetch.call_args[0][1] == SAMPLE_TENANT
+    assert "tenant_id = $1" in sql
+    assert mock_conn.fetch.call_args[0][1] == TENANT
 
 
 @pytest.mark.asyncio
-async def test_search_sql_contains_cosine_operator(store, mock_conn):
-    await store.search(SAMPLE_TENANT, SAMPLE_EMBEDDING, top_k=5)
+async def test_search_uses_cosine_distance_operator(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5)
     sql = mock_conn.fetch.call_args[0][0]
     assert "<=>" in sql
 
 
 @pytest.mark.asyncio
-async def test_search_includes_similarity_in_select(store, mock_conn):
-    await store.search(SAMPLE_TENANT, SAMPLE_EMBEDDING, top_k=5)
+async def test_search_selects_similarity_column(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5)
     sql = mock_conn.fetch.call_args[0][0]
-    assert "similarity" in sql or "1 -" in sql
+    assert "similarity" in sql
 
 
 @pytest.mark.asyncio
-async def test_search_with_doc_type_filter_adds_where_clause(store, mock_conn):
-    await store.search(
-        SAMPLE_TENANT,
-        SAMPLE_EMBEDDING,
-        doc_type="monthly_summary",
-    )
+async def test_search_with_doc_domain_adds_condition(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5, doc_domain="staff")
     sql = mock_conn.fetch.call_args[0][0]
-    assert "AND doc_type" in sql
+    assert "doc_domain = $" in sql
 
 
 @pytest.mark.asyncio
-async def test_search_without_doc_type_no_type_filter(store, mock_conn):
-    await store.search(SAMPLE_TENANT, SAMPLE_EMBEDDING, doc_type=None)
+async def test_search_with_doc_type_adds_condition(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5, doc_type="ranking")
     sql = mock_conn.fetch.call_args[0][0]
-    assert "AND doc_type" not in sql
+    assert "doc_type = $" in sql
 
 
 @pytest.mark.asyncio
-async def test_search_passes_top_k_as_limit_param(store, mock_conn):
-    await store.search(SAMPLE_TENANT, SAMPLE_EMBEDDING, top_k=7)
+async def test_search_with_since_date_adds_condition(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5, since_date=PERIOD)
+    sql = mock_conn.fetch.call_args[0][0]
+    assert "period_start >=" in sql
+
+
+@pytest.mark.asyncio
+async def test_search_no_filters_no_extra_conditions(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5)
+    sql = mock_conn.fetch.call_args[0][0]
+    assert "doc_domain = $" not in sql
+    assert "doc_type = $" not in sql
+    assert "period_start >=" not in sql
+
+
+@pytest.mark.asyncio
+async def test_search_top_k_in_params(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=7)
     args = mock_conn.fetch.call_args[0]
     assert 7 in args
 
 
 @pytest.mark.asyncio
-async def test_search_converts_records_to_dicts(store, mock_conn):
+async def test_search_returns_list_of_dicts(store, mock_conn):
     now = datetime.now()
-    row = {
-        "id": "uuid",
-        "doc_id": "x",
-        "doc_type": "y",
-        "chunk_text": "z",
-        "metadata": {},
-        "similarity": 0.9,
-        "created_at": now,
-        "updated_at": now,
-    }
-    mock_conn.fetch.return_value = [row]
-    result = await store.search(SAMPLE_TENANT, SAMPLE_EMBEDDING, top_k=5)
-    assert isinstance(result[0], dict)
-    assert result[0]["similarity"] == 0.9
+    mock_conn.fetch.return_value = [
+        {
+            "id": "u",
+            "doc_id": DOC_ID,
+            "doc_domain": DOC_DOMAIN,
+            "doc_type": DOC_TYPE,
+            "chunk_text": TEXT,
+            "period_start": PERIOD,
+            "metadata": {},
+            "created_at": now,
+            "updated_at": now,
+            "similarity": 0.88,
+        }
+    ]
+    out = await store.search(TENANT, EMBEDDING, top_k=5)
+    assert isinstance(out[0], dict)
+    assert out[0]["similarity"] == 0.88
+
+
+# ---------------------------------------------------------------------------
+# search_multi_domain
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_search_multi_domain_calls_search_once_per_domain(store):
+    with patch.object(VectorStore, "search", new_callable=AsyncMock) as m:
+        m.return_value = []
+        await store.search_multi_domain(
+            TENANT, EMBEDDING, domains=["revenue", "staff", "clients"],
+            top_k_per_domain=2,
+        )
+    assert m.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_search_multi_domain_combines_all_results(store):
+    async def side_effect(*_a, **kwargs):
+        d = kwargs.get("doc_domain", "")
+        return [{"doc_id": f"{d}_1", "similarity": 0.5}]
+
+    with patch.object(VectorStore, "search", new_callable=AsyncMock) as m:
+        m.side_effect = side_effect
+        out = await store.search_multi_domain(
+            TENANT, EMBEDDING, domains=["a", "b"],
+            top_k_per_domain=3,
+        )
+    assert len(out) == 2
+    ids = {r["doc_id"] for r in out}
+    assert ids == {"a_1", "b_1"}
+
+
+@pytest.mark.asyncio
+async def test_search_multi_domain_sorted_by_similarity_desc(store):
+    async def side_effect(*_a, **kwargs):
+        if kwargs.get("doc_domain") == "low":
+            return [{"doc_id": "x", "similarity": 0.2}]
+        return [{"doc_id": "y", "similarity": 0.9}]
+
+    with patch.object(VectorStore, "search", new_callable=AsyncMock) as m:
+        m.side_effect = side_effect
+        out = await store.search_multi_domain(
+            TENANT, EMBEDDING, domains=["low", "high"],
+        )
+    assert out[0]["similarity"] >= out[1]["similarity"]
+
+
+@pytest.mark.asyncio
+async def test_search_multi_domain_deduplicates_by_doc_id(store):
+    async def side_effect(*_a, **kwargs):
+        return [{"doc_id": "same", "similarity": 0.3}]
+
+    with patch.object(VectorStore, "search", new_callable=AsyncMock) as m:
+        m.side_effect = side_effect
+        out = await store.search_multi_domain(
+            TENANT, EMBEDDING, domains=["revenue", "staff"],
+        )
+    assert len(out) == 1
+    assert out[0]["doc_id"] == "same"
 
 
 # ---------------------------------------------------------------------------
@@ -265,41 +394,31 @@ async def test_search_converts_records_to_dicts(store, mock_conn):
 
 
 @pytest.mark.asyncio
-async def test_search_multi_type_returns_combined_results(store):
-    async def fake_search(*_args, **kwargs):
-        dt = kwargs["doc_type"]
-        return [
-            {"doc_type": dt, "similarity": 0.5, "doc_id": f"{dt}-1"},
-            {"doc_type": dt, "similarity": 0.4, "doc_id": f"{dt}-2"},
-        ]
-
+async def test_search_multi_type_calls_search_once_per_type(store):
     with patch.object(VectorStore, "search", new_callable=AsyncMock) as m:
-        m.side_effect = fake_search
-        out = await store.search_multi_type(
-            SAMPLE_TENANT,
-            SAMPLE_EMBEDDING,
-            doc_types=["monthly_summary", "staff_summary"],
-            top_k_per_type=3,
+        m.return_value = []
+        await store.search_multi_type(
+            TENANT, EMBEDDING, doc_domain="revenue",
+            doc_types=["monthly_summary", "daily_trend"],
         )
-    assert len(out) == 4
+    assert m.call_count == 2
 
 
 @pytest.mark.asyncio
-async def test_search_multi_type_sorted_by_similarity_desc(store):
-    async def fake_search(*_args, **kwargs):
-        doc_type = kwargs["doc_type"]
-        if doc_type == "monthly_summary":
-            return [{"similarity": 0.3, "doc_id": "m1"}]
-        return [{"similarity": 0.9, "doc_id": "s1"}]
+async def test_search_multi_type_passes_correct_domain_to_each_call(store):
+    seen: list[str] = []
+
+    async def side_effect(*_a, **kwargs):
+        seen.append(kwargs.get("doc_domain", ""))
+        return []
 
     with patch.object(VectorStore, "search", new_callable=AsyncMock) as m:
-        m.side_effect = fake_search
-        out = await store.search_multi_type(
-            SAMPLE_TENANT,
-            SAMPLE_EMBEDDING,
-            doc_types=["monthly_summary", "staff_summary"],
+        m.side_effect = side_effect
+        await store.search_multi_type(
+            TENANT, EMBEDDING, doc_domain="revenue",
+            doc_types=["a", "b"],
         )
-    assert out[0]["similarity"] >= out[1]["similarity"]
+    assert seen == ["revenue", "revenue"]
 
 
 # ---------------------------------------------------------------------------
@@ -308,30 +427,29 @@ async def test_search_multi_type_sorted_by_similarity_desc(store):
 
 
 @pytest.mark.asyncio
-async def test_exists_returns_true_when_found(store, mock_conn):
+async def test_exists_true_when_fetchval_returns_true(store, mock_conn):
     mock_conn.fetchval.return_value = True
-    assert await store.exists(SAMPLE_TENANT, SAMPLE_DOC_ID) is True
+    assert await store.exists(TENANT, DOC_ID) is True
 
 
 @pytest.mark.asyncio
-async def test_exists_returns_false_when_not_found(store, mock_conn):
+async def test_exists_false_when_fetchval_returns_false(store, mock_conn):
     mock_conn.fetchval.return_value = False
-    assert await store.exists(SAMPLE_TENANT, SAMPLE_DOC_ID) is False
+    assert await store.exists(TENANT, DOC_ID) is False
 
 
 @pytest.mark.asyncio
-async def test_exists_sql_contains_exists_keyword(store, mock_conn):
-    await store.exists(SAMPLE_TENANT, SAMPLE_DOC_ID)
+async def test_exists_sql_has_exists_keyword(store, mock_conn):
+    await store.exists(TENANT, DOC_ID)
     sql = mock_conn.fetchval.call_args[0][0]
     assert "EXISTS" in sql
 
 
 @pytest.mark.asyncio
-async def test_exists_filters_by_tenant_and_doc_id(store, mock_conn):
-    await store.exists(SAMPLE_TENANT, SAMPLE_DOC_ID)
+async def test_exists_passes_both_tenant_and_doc_id(store, mock_conn):
+    await store.exists(TENANT, DOC_ID)
     args = mock_conn.fetchval.call_args[0]
-    assert SAMPLE_TENANT in args
-    assert SAMPLE_DOC_ID in args
+    assert TENANT in args and DOC_ID in args
 
 
 # ---------------------------------------------------------------------------
@@ -340,22 +458,39 @@ async def test_exists_filters_by_tenant_and_doc_id(store, mock_conn):
 
 
 @pytest.mark.asyncio
-async def test_delete_returns_true_when_row_deleted(store, mock_conn):
-    mock_conn.fetchrow.return_value = {"id": "uuid"}
-    assert await store.delete(SAMPLE_TENANT, SAMPLE_DOC_ID) is True
+async def test_delete_true_when_row_returned(store, mock_conn):
+    mock_conn.fetchrow.return_value = {"id": "x"}
+    assert await store.delete(TENANT, DOC_ID) is True
 
 
 @pytest.mark.asyncio
-async def test_delete_returns_false_when_not_found(store, mock_conn):
+async def test_delete_false_when_fetchrow_none(store, mock_conn):
     mock_conn.fetchrow.return_value = None
-    assert await store.delete(SAMPLE_TENANT, SAMPLE_DOC_ID) is False
+    assert await store.delete(TENANT, DOC_ID) is False
 
 
 @pytest.mark.asyncio
 async def test_delete_sql_has_returning_clause(store, mock_conn):
-    await store.delete(SAMPLE_TENANT, SAMPLE_DOC_ID)
-    sql = mock_conn.fetchrow.call_args[0][0]
-    assert "RETURNING" in sql
+    await store.delete(TENANT, DOC_ID)
+    assert "RETURNING" in mock_conn.fetchrow.call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# delete_by_domain
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_delete_by_domain_returns_count(store, mock_conn):
+    mock_conn.fetch.return_value = [{"id": 1}, {"id": 2}]
+    assert await store.delete_by_domain(TENANT, DOC_DOMAIN) == 2
+
+
+@pytest.mark.asyncio
+async def test_delete_by_domain_sql_filters_doc_domain(store, mock_conn):
+    await store.delete_by_domain(TENANT, DOC_DOMAIN)
+    sql = mock_conn.fetch.call_args[0][0]
+    assert "doc_domain" in sql
 
 
 # ---------------------------------------------------------------------------
@@ -365,35 +500,17 @@ async def test_delete_sql_has_returning_clause(store, mock_conn):
 
 @pytest.mark.asyncio
 async def test_delete_by_tenant_returns_count(store, mock_conn):
-    mock_conn.fetch.return_value = [{"id": 1}, {"id": 2}]
-    assert await store.delete_by_tenant(SAMPLE_TENANT) == 2
+    mock_conn.fetch.return_value = [{"id": "a"}]
+    assert await store.delete_by_tenant(TENANT) == 1
 
 
 @pytest.mark.asyncio
-async def test_delete_by_tenant_sql_deletes_all_for_tenant(store, mock_conn):
-    await store.delete_by_tenant(SAMPLE_TENANT)
+async def test_delete_by_tenant_sql_filters_only_tenant(store, mock_conn):
+    await store.delete_by_tenant(TENANT)
     sql = mock_conn.fetch.call_args[0][0]
     assert "DELETE FROM embeddings" in sql
     assert "tenant_id" in sql
-
-
-# ---------------------------------------------------------------------------
-# delete_by_type
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_delete_by_type_returns_count(store, mock_conn):
-    mock_conn.fetch.return_value = [{"id": "a"}]
-    assert await store.delete_by_type(SAMPLE_TENANT, SAMPLE_DOC_TYPE) == 1
-
-
-@pytest.mark.asyncio
-async def test_delete_by_type_sql_filters_tenant_and_type(store, mock_conn):
-    await store.delete_by_type(SAMPLE_TENANT, SAMPLE_DOC_TYPE)
-    sql = mock_conn.fetch.call_args[0][0]
-    assert "DELETE FROM embeddings" in sql
-    assert "doc_type" in sql
+    assert "doc_domain" not in sql
 
 
 # ---------------------------------------------------------------------------
@@ -403,49 +520,39 @@ async def test_delete_by_type_sql_filters_tenant_and_type(store, mock_conn):
 
 @pytest.mark.asyncio
 async def test_count_returns_integer(store, mock_conn):
-    mock_conn.fetchval.return_value = 5
-    assert await store.count(SAMPLE_TENANT) == 5
+    mock_conn.fetchval.return_value = 12
+    assert await store.count(TENANT) == 12
 
 
 @pytest.mark.asyncio
-async def test_count_with_doc_type_adds_filter(store, mock_conn):
+async def test_count_none_fetchval_returns_zero(store, mock_conn):
+    mock_conn.fetchval.return_value = None
+    assert await store.count(TENANT) == 0
+
+
+@pytest.mark.asyncio
+async def test_count_with_domain_adds_filter(store, mock_conn):
     mock_conn.fetchval.return_value = 1
-    await store.count(SAMPLE_TENANT, doc_type="monthly_summary")
+    await store.count(TENANT, doc_domain="staff")
     sql = mock_conn.fetchval.call_args[0][0]
-    assert "doc_type" in sql
+    assert "doc_domain = $" in sql
 
 
 @pytest.mark.asyncio
-async def test_count_without_doc_type_no_type_filter(store, mock_conn):
-    mock_conn.fetchval.return_value = 0
-    await store.count(SAMPLE_TENANT, doc_type=None)
+async def test_count_with_type_adds_filter(store, mock_conn):
+    mock_conn.fetchval.return_value = 1
+    await store.count(TENANT, doc_type="ranking")
     sql = mock_conn.fetchval.call_args[0][0]
-    assert "doc_type" not in sql
+    assert "doc_type = $" in sql
 
 
-# ---------------------------------------------------------------------------
-# _vec
-# ---------------------------------------------------------------------------
-
-
-def test_vec_returns_string():
-    result = VectorStore._vec([0.1, 0.2, 0.3])
-    assert isinstance(result, str)
-
-
-def test_vec_starts_and_ends_with_brackets():
-    result = VectorStore._vec([0.1, 0.2, 0.3])
-    assert result.startswith("[") and result.endswith("]")
-
-
-def test_vec_correct_length():
-    result = VectorStore._vec([0.1] * 1536)
-    assert len(result.split(",")) == 1536
-
-
-def test_vec_handles_negative_values():
-    result = VectorStore._vec([-0.5, 0.5])
-    assert "-" in result
+@pytest.mark.asyncio
+async def test_count_no_filters_clean_sql(store, mock_conn):
+    mock_conn.fetchval.return_value = 0
+    await store.count(TENANT)
+    sql = mock_conn.fetchval.call_args[0][0]
+    assert "doc_domain = $" not in sql
+    assert "doc_type = $" not in sql
 
 
 # ---------------------------------------------------------------------------
@@ -456,221 +563,64 @@ def test_vec_handles_negative_values():
 @pytest.mark.asyncio
 async def test_get_doc_ids_returns_list_of_strings(store, mock_conn):
     mock_conn.fetch.return_value = [{"doc_id": "a"}, {"doc_id": "b"}]
-    assert await store.get_doc_ids(SAMPLE_TENANT) == ["a", "b"]
+    assert await store.get_doc_ids(TENANT) == ["a", "b"]
 
 
 @pytest.mark.asyncio
-async def test_get_doc_ids_with_doc_type_adds_filter(store, mock_conn):
+async def test_get_doc_ids_with_domain_filter_adds_condition(store, mock_conn):
     mock_conn.fetch.return_value = []
-    await store.get_doc_ids(SAMPLE_TENANT, doc_type="monthly_summary")
+    await store.get_doc_ids(TENANT, doc_domain="revenue")
     sql = mock_conn.fetch.call_args[0][0]
-    assert "doc_type" in sql
+    assert "doc_domain = $" in sql
+
+
+@pytest.mark.asyncio
+async def test_get_doc_ids_no_filter_clean_sql(store, mock_conn):
+    mock_conn.fetch.return_value = []
+    await store.get_doc_ids(TENANT)
+    sql = mock_conn.fetch.call_args[0][0]
+    assert "doc_domain = $" not in sql
+    assert "doc_type = $" not in sql
 
 
 # ---------------------------------------------------------------------------
-# from_pool / initialize_schema
+# constants
 # ---------------------------------------------------------------------------
 
 
-def test_from_pool_returns_instance(mock_pool):
+def test_domains_is_frozenset():
+    assert isinstance(DOMAINS, frozenset)
+
+
+def test_doc_types_is_frozenset():
+    assert isinstance(DOC_TYPES, frozenset)
+
+
+def test_domains_contains_revenue():
+    assert "revenue" in DOMAINS
+
+
+def test_domains_contains_staff():
+    assert "staff" in DOMAINS
+
+
+def test_doc_types_contains_monthly_summary():
+    assert "monthly_summary" in DOC_TYPES
+
+
+# ---------------------------------------------------------------------------
+# initialize_schema / from_pool
+# ---------------------------------------------------------------------------
+
+
+def test_from_pool(mock_pool):
     s = VectorStore.from_pool(mock_pool)
     assert isinstance(s, VectorStore)
     assert s._pool is mock_pool
 
 
 @pytest.mark.asyncio
-async def test_initialize_schema_executes_statements_from_repo_file(store, mock_conn):
+async def test_initialize_schema_executes_statements(store, mock_conn):
     await store.initialize_schema()
     assert mock_conn.execute.called
-    assert mock_conn.execute.call_count >= 4
-
-
-</think>
-<think>
-I made a mess of the initialize_schema tests - I should simplify. The user didn't require initialize_schema tests in the list. Let me remove the broken/complex tests and add one clean test that patches Path or uses the real file.
-
-Actually the simplest test for initialize_schema:
-1. Patch `Path.read_text` to return `"SELECT 1;"` 
-2. Or use the real repo's init_db.sql and count execute calls
-
-Let me read what I wrote for test_initialize_schema - it's broken. I'll replace with:
-
-```python
-@pytest.mark.asyncio
-async def test_initialize_schema_executes_split_statements(store, mock_conn, monkeypatch):
-    from app.services import vector_store as vs
-    sample_sql = "CREATE EXTENSION IF NOT EXISTS vector;\nSELECT 1;\n"
-    monkeypatch.setattr(
-        vs.Path,
-        "read_text",
-        lambda self, encoding="utf-8": sample_sql if "init_db.sql" in str(self) else Path(self).read_text(encoding=encoding),
-    )
-```
-
-That's fragile. Better approach:
-
-```python
-@pytest.mark.asyncio
-async def test_initialize_schema_calls_execute_per_statement(store, mock_conn, monkeypatch):
-    from app.services import vector_store as vs_mod
-    fake_path = MagicMock()
-    fake_path.read_text = MagicMock(return_value="SELECT 1;\nSELECT 2;\n")
-    monkeypatch.setattr(vs_mod.Path, "__new__", lambda cls, *a, **k: fake_path)
-```
-
-Path is tricky to mock.
-
-Simplest: patch `Path.read_text` on the instance returned by the path construction:
-
-```python
-@pytest.mark.asyncio
-async def test_initialize_schema(store, mock_conn, monkeypatch):
-    from pathlib import Path
-    from app.services import vector_store as vs
-
-    def fake_read_text(self, encoding="utf-8"):
-        return "SELECT 1;\nSELECT 2;\n"
-
-    monkeypatch.setattr(Path, "read_text", fake_read_text)
-    await store.initialize_schema()
-```
-
-That would break ALL Path.read_text calls globally in that test - might affect other things. Scope to the method:
-
-```python
-read_sql = "SELECT 1;\nSELECT 2;\n"
-
-async def fake_init(self):
-    parts = [p.strip() for p in read_sql.split(";") if p.strip()]
-    async with self._pool.acquire() as conn:
-        for stmt in parts:
-            await conn.execute(stmt)
-
-# doesn't test real method
-```
-
-Best: patch only `vector_store.Path` - replace the path class's behavior when dividing:
-
-Actually the cleanest test:
-```python
-@pytest.mark.asyncio
-async def test_initialize_schema_executes_non_empty_statements(store, mock_conn, monkeypatch):
-    from app.services import vector_store as vs_mod
-    content = "FOO;\n\nBAR  ;\n"
-    monkeypatch.setattr(
-        vs_mod,
-        "Path",
-        MagicMock(return_value=MagicMock(read_text=MagicMock(return_value=content))),
-    )
-```
-
-Wait, `Path(__file__).parent...` - we need the mock chain:
-`Path.return_value.parent.parent.parent.__truediv__` ...
-
-Too heavy. Use patch.object on VectorStore.initialize_schema to inject sql_text - no that's not testing implementation.
-
-I'll use `unittest.mock.patch` with `pathlib.Path` and a wrapper:
-
-```python
-real_path = pathlib.Path
-class PathSubclass(real_path):
-    def read_text(self, encoding=None, errors=None):
-        if self.name == "init_db.sql":
-            return "SELECT 1;\nSELECT 2;\n"
-        return real_path.read_text(self, encoding=encoding, errors=errors)
-```
-
-Can't easily subclass Path.
-
-**Approach:** patch `Path.read_text` where used:
-
-```python
-@pytest.mark.asyncio
-async def test_initialize_schema_runs_statements(store, mock_conn, monkeypatch):
-    from app.services import vector_store
-
-    original_init = vector_store.VectorStore.initialize_schema
-
-    async def wrapped(self):
-        sql_text = "SELECT 1;\nSELECT 2;\n"
-        parts = [p.strip() for p in sql_text.split(";") if p.strip()]
-        async with self._pool.acquire() as conn:
-            for stmt in parts:
-                await conn.execute(stmt)
-
-    # Test the loop logic by temporarily... 
-```
-
-I'll just delete the messy tests and add one that runs the real `initialize_schema` against the repo file - it will call execute multiple times. Count >= 1.
-
-```python
-@pytest.mark.asyncio
-async def test_initialize_schema_runs_real_sql_file(store, mock_conn):
-    await store.initialize_schema()
-    assert mock_conn.execute.called
-    assert mock_conn.execute.call_count >= 1
-```
-
-The repo's init_db.sql has multiple statements separated by `;` - split will produce ~6 statements. Good.
-
-Remove the broken tests `test_initialize_schema_executes_statements` and `test_initialize_schema_reads_infra_file`.
-
-Fix `search_multi_type` fake_search - patch uses keyword args but VectorStore.search is called as:
-```python
-await self.search(
-    tenant_id=tenant_id,
-    query_embedding=query_embedding,
-    top_k=top_k_per_type,
-    doc_type=dt,
-)
-```
-So fake_search needs to accept those kwargs. Good.
-
-Also fix patch - `patch.object(VectorStore, "search", new_callable=AsyncMock)` - the side_effect function receives (self, ...) when bound... Actually patch.object replaces the method, so when store.search is called, it's AsyncMock - the store instance might not use self from VectorStore if we're patching the class. When we call `store.search(...)`, it uses the patched method on the class, so the mock gets (store, ...) as first args.
-
-Actually `store.search` is bound method - if we patch `VectorStore.search`, then `store.search` is still the patched version - AsyncMock when called receives `self` as first positional arg.
-
-Our fake_search uses only keyword args:
-```python
-async def fake_search(*, tenant_id, query_embedding, top_k, doc_type):
-```
-But the actual call is positional + keyword mix:
-`await self.search(tenant_id=tenant_id, query_embedding=query_embedding, top_k=top_k_per_type, doc_type=dt)`
-
-All keyword - good. But AsyncMock will call side_effect with (self, ...) if it's a method... 
-
-When you patch a class method with AsyncMock(side_effect=fn), the fn receives the same args as the original. For `await store.search(tenant_id=..., ...)`, the mock is invoked - I think the first arg might be the store instance.
-
-Let me check: `patch.object(VectorStore, 'search', new_callable=AsyncMock)` - when `store.search(tenant_id='42', ...)` is called, the mock gets `tenant_id` as kwarg. Does it get self?
-
-For a bound method replacement on the class, Python's behavior: `VectorStore.search` patched means `store.search` is a wrapper that passes self. The mock might receive (self, **kwargs) or just (**kwargs).
-
-I'll use `async def fake_search(self, *args, **kwargs):` and read from kwargs.
-
-```python
-async def fake_search(self, *, tenant_id, query_embedding, top_k, doc_type):
-```
-
-Actually in tests they use:
-```python
-async def fake_search(*, tenant_id, query_embedding, top_k, doc_type):
-```
-
-If self is passed first, this fails. I'll use:
-
-```python
-async def fake_search(*args, **kwargs):
-    doc_type = kwargs["doc_type"]
-    ...
-```
-
-Let me run pytest to see.
-
-Also remove the broken initialize_schema tests and add the simple one.
-
-Fix search_multi_type tests to use flexible fake.
-</think>
-Removing broken `initialize_schema` tests and adding a single test that runs against the real SQL file. Fixing `search_multi_type` mocks to handle `self` if passed.
-
-<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>
-StrReplace
+    assert mock_conn.execute.call_count >= 5
