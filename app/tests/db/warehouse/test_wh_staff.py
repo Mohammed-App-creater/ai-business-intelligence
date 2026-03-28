@@ -77,6 +77,6 @@ async def test_get_underperforming_staff_min_visits(mock_pool, mock_conn):
     await wh_staff.get_underperforming_staff(
         mock_pool, SAMPLE_ORG_ID, SAMPLE_DATE, min_visits=2
     )
-    _sql, params = _sql_params(mock_conn.fetch.call_args)
+    sql, params = _sql_params(mock_conn.fetch.call_args)
     assert params[2] == 2
     assert "avg_rev" in sql.lower()

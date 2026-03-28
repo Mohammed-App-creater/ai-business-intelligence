@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.db.warehouse import wh_revenue
-from app.tests.db.warehouse.conftest import SAMPLE_DATE, SAMPLE_ORG_ID
+from app.tests.db.warehouse.conftest import SAMPLE_DATE, SAMPLE_DATE_B, SAMPLE_ORG_ID
 
 
 def _sql_params(call):
