@@ -9,6 +9,10 @@ OpenAI-specific choices:
   - Concise system prompt — GPT performs well with direct instructions
   - Headers (##) used instead of XML tags for data sections
   - Same output schema as Anthropic for consistency downstream
+
+Context sources (rendered in priority order):
+  1. Retrieved documents (MVP) — chunk_texts from vector store
+  2. Typed entries (V2)       — structured data from warehouse
 """
 from __future__ import annotations
 
@@ -46,6 +50,11 @@ def build(data: RagChatData) -> tuple[str, str]:
         f"- Period: {data.analysis_period}"
     )
 
+    # MVP path — retrieved documents from vector store
+    if data.documents:
+        sections.append(_render_documents(data.documents))
+
+    # V2 path — structured entries from warehouse
     if data.revenue:
         sections.append(_render_revenue(data.revenue))
 
@@ -70,6 +79,15 @@ def build(data: RagChatData) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # Section renderers
 # ---------------------------------------------------------------------------
+
+def _render_documents(docs: list[str]) -> str:
+    """Render retrieved vector store documents with markdown headers."""
+    numbered = "\n\n".join(
+        f"### Document {i + 1}\n{doc.strip()}"
+        for i, doc in enumerate(docs)
+    )
+    return f"## Retrieved Context\n{numbered}"
+
 
 def _render_revenue(entries: list) -> str:
     lines = ["## Revenue"]

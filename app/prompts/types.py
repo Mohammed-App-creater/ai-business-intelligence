@@ -74,14 +74,27 @@ class RagChatData:
     Input for rag_chat prompts.
     Used by: RAG pipeline before calling LLM for a business question.
 
-    Only populate the sections relevant to the question —
-    empty lists are omitted from the prompt automatically.
+    Two context paths (can be used together):
+
+    1. **documents** (MVP) — pre-formatted text summaries retrieved from
+       the vector store. Each string is a complete chunk_text produced by
+       the doc generator (KPI block + observation). The prompt template
+       renders these as-is inside context tags.
+
+    2. **Typed entry lists** (V2 / warehouse path) — structured data
+       populated directly from the warehouse client. Only populate the
+       sections relevant to the question — empty lists are omitted from
+       the prompt automatically.
     """
     business_id:     str
     business_type:   str                          # e.g. "Hair Salon"
     analysis_period: str                          # e.g. "March 2026"
     question:        str
 
+    # MVP path — RAG documents from vector store
+    documents:    list[str]              = field(default_factory=list)
+
+    # V2 path — structured entries from warehouse
     revenue:      list[RevenueEntry]      = field(default_factory=list)
     appointments: list[AppointmentEntry]  = field(default_factory=list)
     staff:        list[StaffEntry]        = field(default_factory=list)

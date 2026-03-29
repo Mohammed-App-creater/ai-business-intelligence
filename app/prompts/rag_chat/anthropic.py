@@ -9,6 +9,10 @@ Anthropic-specific choices:
   - Explicit JSON schema in <output_format> tag (no native response_format)
   - Guardrails block — tell the model exactly what NOT to do
   - Only non-empty data sections are rendered
+
+Context sources (rendered in priority order):
+  1. Retrieved documents (MVP) — chunk_texts from vector store
+  2. Typed entries (V2)       — structured data from warehouse
 """
 from __future__ import annotations
 
@@ -38,6 +42,11 @@ def build(data: RagChatData) -> tuple[str, str]:
     """
     sections = []
 
+    # MVP path — retrieved documents from vector store
+    if data.documents:
+        sections.append(_render_documents(data.documents))
+
+    # V2 path — structured entries from warehouse
     if data.revenue:
         sections.append(_render_revenue(data.revenue))
 
@@ -80,6 +89,15 @@ def _business_context(data: RagChatData) -> str:
         f"Analysis Period: {data.analysis_period}\n"
         f"</business_context>"
     )
+
+
+def _render_documents(docs: list[str]) -> str:
+    """Render retrieved vector store documents inside XML tags."""
+    numbered = "\n\n".join(
+        f"<document index=\"{i + 1}\">\n{doc.strip()}\n</document>"
+        for i, doc in enumerate(docs)
+    )
+    return f"<retrieved_context>\n{numbered}\n</retrieved_context>"
 
 
 def _render_revenue(entries: list) -> str:
