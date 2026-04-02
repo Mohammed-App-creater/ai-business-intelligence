@@ -59,9 +59,21 @@ class OpenAIProvider:
     async def complete(self, request: LLMRequest) -> LLMResponse:
         t0 = time.perf_counter()
 
+        system = request.system
+        user = request.user
+
+        # OpenAI requires the word "json" to appear in messages when using
+        # response_format=json_object (e.g. DIRECT chat uses plain prompts).
+        if request.output_mode == OutputMode.STRUCTURED_JSON:
+            combined = (system or "") + (user or "")
+            if "json" not in combined.lower():
+                system = (system or "").rstrip() + (
+                    "\n\nRespond with a valid JSON object."
+                )
+
         messages = [
-            {"role": "system",  "content": request.system},
-            {"role": "user",    "content": request.user},
+            {"role": "system",  "content": system},
+            {"role": "user",    "content": user},
         ]
 
         kwargs: dict = {

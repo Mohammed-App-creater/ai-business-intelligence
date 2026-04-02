@@ -160,6 +160,29 @@ class QueryAnalyzer:
         self._gateway = gateway
         self._confidence_threshold = confidence_threshold
 
+    @property
+    def confidence_threshold(self) -> float:
+        """Minimum rule confidence before skipping the LLM classifier."""
+        return self._confidence_threshold
+
+    def preview_rule_routing(self, question: str) -> AnalysisResult:
+        """
+        Run only Step 1 (rule-based routing). Does not call the LLM classifier.
+
+        Use this to debug why ``analyze()`` might choose RAG vs DIRECT before
+        any gateway fallback or classifier call.
+        """
+        question = question.strip()
+        if not question:
+            return AnalysisResult(
+                route=Route.DIRECT,
+                confidence=1.0,
+                method="rules",
+                reasoning="Empty question.",
+                latency_ms=0.0,
+            )
+        return self._rule_based_check(question)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------

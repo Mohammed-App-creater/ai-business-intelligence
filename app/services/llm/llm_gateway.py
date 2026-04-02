@@ -60,11 +60,12 @@ MODEL_MAP: dict[Provider, dict[UseCase, str]] = {
         UseCase.DOC_GENERATION: "claude-haiku-4-5-20251001",
         UseCase.AGENT:          "claude-sonnet-4-6",
     },
+    # Use models available on typical OpenAI keys; gpt-4.1* can 400/quota oddly vs gpt-4o*.
     Provider.OPENAI: {
-        UseCase.CLASSIFIER:     "gpt-4.1-mini",
-        UseCase.RAG_CHAT:       "gpt-4.1",
-        UseCase.DOC_GENERATION: "gpt-4.1-mini",
-        UseCase.AGENT:          "gpt-4.1",
+        UseCase.CLASSIFIER:     "gpt-4o-mini",
+        UseCase.RAG_CHAT:       "gpt-4o-mini",
+        UseCase.DOC_GENERATION: "gpt-4o-mini",
+        UseCase.AGENT:          "gpt-4o-mini",
     },
 }
 

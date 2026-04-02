@@ -107,8 +107,8 @@ class TestModelMap:
     def test_anthropic_doc_generation_is_haiku(self):
         assert "haiku" in MODEL_MAP[Provider.ANTHROPIC][UseCase.DOC_GENERATION].lower()
 
-    def test_openai_rag_chat_is_gpt41(self):
-        assert "gpt-4.1" in MODEL_MAP[Provider.OPENAI][UseCase.RAG_CHAT]
+    def test_openai_rag_chat_uses_gpt4o_family(self):
+        assert "gpt-4o" in MODEL_MAP[Provider.OPENAI][UseCase.RAG_CHAT]
 
     def test_openai_classifier_is_mini(self):
         assert "mini" in MODEL_MAP[Provider.OPENAI][UseCase.CLASSIFIER]
