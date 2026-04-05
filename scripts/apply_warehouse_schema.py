@@ -2,7 +2,7 @@
 Apply infra/warehouse_schema.sql to the analytics warehouse (PostgreSQL).
 
 Uses WH_PG_* environment variables (same as app.services.db.db_pool.PGTarget.WAREHOUSE).
-Does not require the psql CLI — only psycopg2 + sqlparse (see requirements.txt).
+Does not require the psql CLI — only psycopg2 (see requirements.txt).
 
 Usage (from repo root, with .env or exported WH_PG_*):
     python scripts/apply_warehouse_schema.py
@@ -13,8 +13,9 @@ import os
 import sys
 from pathlib import Path
 
+import re
+
 import psycopg2
-import sqlparse
 from dotenv import load_dotenv
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,11 +50,9 @@ def main() -> int:
     sql_text = _SQL_PATH.read_text(encoding="utf-8")
 
     with conn.cursor() as cur:
-        for stmt in sqlparse.parse(sql_text):
-            s = str(stmt).strip()
-            if not s:
-                continue
-            cur.execute(s)
+        statements = [s.strip() for s in re.split(r';\s*\n', sql_text) if s.strip()]
+        for stmt in statements:
+            cur.execute(stmt)
 
     conn.close()
     print(f"Applied warehouse schema: {_SQL_PATH}")

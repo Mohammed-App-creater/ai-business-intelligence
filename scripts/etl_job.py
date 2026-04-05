@@ -1,5 +1,5 @@
 """
-ETL orchestrator: production MySQL → transforms → analytics warehouse (PostgreSQL).
+ETL orchestrator: analytics backend (HTTP) → transforms → analytics warehouse (PostgreSQL).
 
 Run via cron or CLI: ``python scripts/etl_job.py``.
 """
@@ -15,64 +15,60 @@ from datetime import date
 from typing import Any, Callable
 
 from scripts.etl.base import ETLLogger, run_etl_job
-from scripts.etl.extractors import (
-    AppointmentsExtractor,
-    AttendanceExtractor,
-    CampaignsExtractor,
-    ClientsExtractor,
-    DailyRevenueExtractor,
-    ExpensesExtractor,
-    PaymentsExtractor,
-    RevenueExtractor,
-    ReviewsExtractor,
-    ServicesExtractor,
-    StaffExtractor,
-    SubscriptionsExtractor,
-)
 from scripts.etl.loaders import (
-    AppointmentsLoader,
-    AttendanceLoader,
-    CampaignsLoader,
-    ClientsLoader,
     DailyRevenueLoader,
-    ExpensesLoader,
-    PaymentsLoader,
     RevenueLoader,
-    ReviewsLoader,
-    ServicesLoader,
-    StaffLoader,
-    SubscriptionsLoader,
+    PaymentsLoader,
+    # Sprint 2 — not wired yet
+    # AppointmentsLoader,
+    # Sprint 3 — not wired yet
+    # StaffLoader,
+    # Sprint 4 — not wired yet
+    # ServicesLoader,
+    # Sprint 5 — not wired yet
+    # ClientsLoader,
+    # Sprint 6 — not wired yet
+    # CampaignsLoader,
+    # Sprint 7 — not wired yet
+    # SubscriptionsLoader,
+    # Sprint 10 — not wired yet
+    # ExpensesLoader,
+    # Sprint 11 — not wired yet
+    # ReviewsLoader,
+    # AttendanceLoader,
 )
 from scripts.etl.transforms import (
-    transform_appointments,
-    transform_attendance,
-    transform_campaigns,
-    transform_clients,
     transform_daily_revenue,
-    transform_expenses,
     transform_payments,
     transform_revenue,
-    transform_reviews,
-    transform_services,
-    transform_staff,
-    transform_subscriptions,
+    # Sprint 2 — not wired yet
+    # transform_appointments,
+    # Sprint 3 — not wired yet
+    # transform_staff,
+    # Sprint 4 — not wired yet
+    # transform_services,
+    # Sprint 5 — not wired yet
+    # transform_clients,
+    # Sprint 6 — not wired yet
+    # transform_campaigns,
+    # Sprint 7 — not wired yet
+    # transform_subscriptions,
+    # Sprint 10 — not wired yet
+    # transform_expenses,
+    # Sprint 11 — not wired yet
+    # transform_reviews,
+    # transform_attendance,
 )
-from app.services.db.db_pool import DBPool, DBTarget, PGPool, PGTarget
+from app.services.analytics_client import AnalyticsClient, AnalyticsClientError
+from app.services.db.db_pool import PGPool, PGTarget
 
 log = logging.getLogger(__name__)
-
-_ACTIVE_ORG_SQL = """
-SELECT Id FROM tbl_organization
-WHERE ClientStatus = 1
-  AND IsDeleted = b'1'
-ORDER BY Id
-""".strip()
 
 
 @dataclass
 class TableJob:
     table_name: str
-    extractor_cls: type
+    extractor_fn: Callable
     transform_fn: Callable[..., list[dict]]
     loader_cls: type
     needs_period: bool = True
@@ -80,66 +76,42 @@ class TableJob:
 
 
 TABLE_REGISTRY: list[TableJob] = [
-    TableJob("wh_monthly_revenue", RevenueExtractor, transform_revenue, RevenueLoader),
+    # Sprint 1 — revenue ✅
+    TableJob(
+        "wh_monthly_revenue",
+        lambda ac, oid, s, e: ac.revenue.get_monthly_revenue(oid, s, e),
+        transform_revenue,
+        RevenueLoader,
+    ),
     TableJob(
         "wh_daily_revenue",
-        DailyRevenueExtractor,
+        lambda ac, oid, s, e: ac.revenue.get_daily_revenue(oid, s, e),
         transform_daily_revenue,
         DailyRevenueLoader,
     ),
-    TableJob("wh_staff_performance", StaffExtractor, transform_staff, StaffLoader),
-    TableJob(
-        "wh_service_performance",
-        ServicesExtractor,
-        transform_services,
-        ServicesLoader,
-    ),
-    TableJob(
-        "wh_client_metrics",
-        ClientsExtractor,
-        transform_clients,
-        ClientsLoader,
-        needs_period=False,
-    ),
-    TableJob(
-        "wh_appointment_metrics",
-        AppointmentsExtractor,
-        transform_appointments,
-        AppointmentsLoader,
-    ),
-    TableJob("wh_expense_summary", ExpensesExtractor, transform_expenses, ExpensesLoader),
-    TableJob(
-        "wh_review_summary",
-        ReviewsExtractor,
-        transform_reviews,
-        ReviewsLoader,
-        multi_input=True,
-    ),
     TableJob(
         "wh_payment_breakdown",
-        PaymentsExtractor,
+        lambda ac, oid, s, e: ac.revenue.get_revenue_by_payment_type(oid, s, e),
         transform_payments,
         PaymentsLoader,
     ),
-    TableJob(
-        "wh_campaign_performance",
-        CampaignsExtractor,
-        transform_campaigns,
-        CampaignsLoader,
-    ),
-    TableJob(
-        "wh_attendance_summary",
-        AttendanceExtractor,
-        transform_attendance,
-        AttendanceLoader,
-    ),
-    TableJob(
-        "wh_subscription_revenue",
-        SubscriptionsExtractor,
-        transform_subscriptions,
-        SubscriptionsLoader,
-        multi_input=True,
-    ),
+    # Sprint 2 — not wired yet
+    # TableJob("wh_appointment_metrics", ..., transform_appointments, AppointmentsLoader),
+    # Sprint 3 — not wired yet
+    # TableJob("wh_staff_performance", ..., transform_staff, StaffLoader),
+    # Sprint 4 — not wired yet
+    # TableJob("wh_service_performance", ..., transform_services, ServicesLoader),
+    # Sprint 5 — not wired yet
+    # TableJob("wh_client_metrics", ..., transform_clients, ClientsLoader, needs_period=False),
+    # Sprint 6 — not wired yet
+    # TableJob("wh_campaign_performance", ..., transform_campaigns, CampaignsLoader),
+    # Sprint 7 — not wired yet
+    # TableJob("wh_subscription_revenue", ..., transform_subscriptions, SubscriptionsLoader, multi_input=True),
+    # Sprint 10 — not wired yet
+    # TableJob("wh_expense_summary", ..., transform_expenses, ExpensesLoader),
+    # Sprint 11 — not wired yet
+    # TableJob("wh_review_summary", ..., transform_reviews, ReviewsLoader, multi_input=True),
+    # TableJob("wh_attendance_summary", ..., transform_attendance, AttendanceLoader),
 ]
 
 
@@ -180,25 +152,12 @@ def compute_periods(
     raise ValueError(f"Unknown mode: {mode!r}")
 
 
-async def get_active_org_ids(prod_pool: Any) -> list[int]:
-    """
-    Active organizations from production MySQL.
-
-    ``IsDeleted = b'1'`` means active (legacy schema).
-    """
-    async with prod_pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            await cur.execute(_ACTIVE_ORG_SQL)
-            rows = await cur.fetchall()
-    return [int(r["Id"]) for r in rows]
-
-
 async def run_table_for_org(
     job: TableJob,
     org_id: int,
     period_start: date,
     period_end: date,
-    prod_pool: Any,
+    analytics: AnalyticsClient,
     wh_pool: Any,
     etl_logger: ETLLogger,
     dry_run: bool = False,
@@ -216,16 +175,13 @@ async def run_table_for_org(
         period_start=period_start,
         period_end=period_end,
     ) as result:
-        extractor = job.extractor_cls(prod_pool)
         if job.needs_period:
-            raw_rows = await extractor.extract(org_id, period_start, period_end)
+            raw_rows = await job.extractor_fn(analytics, org_id, period_start, period_end)
         else:
-            raw_rows = await extractor.extract(org_id)
+            raw_rows = await job.extractor_fn(analytics, org_id)
 
-        if job.table_name == "wh_review_summary":
+        if job.multi_input:
             rows = job.transform_fn(*raw_rows)
-        elif job.table_name == "wh_subscription_revenue":
-            rows = job.transform_fn(raw_rows, raw_rows)
         else:
             rows = job.transform_fn(raw_rows)
 
@@ -250,7 +206,7 @@ async def run_org(
     tables: list[TableJob],
     period_start: date,
     period_end: date,
-    prod_pool: Any,
+    analytics: AnalyticsClient,
     wh_pool: Any,
     etl_logger: ETLLogger,
     dry_run: bool = False,
@@ -273,7 +229,7 @@ async def run_org(
                 org_id,
                 period_start,
                 period_end,
-                prod_pool,
+                analytics,
                 wh_pool,
                 etl_logger,
                 dry_run=dry_run,
@@ -324,7 +280,7 @@ async def run_all(args: argparse.Namespace) -> None:
     )
 
     run_started = time.perf_counter()
-    prod_pool = await DBPool.from_env(DBTarget.PRODUCTION)
+    analytics_client, http_client = AnalyticsClient.create()
     wh_pool = await PGPool.from_env(PGTarget.WAREHOUSE)
 
     total_inserted = 0
@@ -356,7 +312,9 @@ async def run_all(args: argparse.Namespace) -> None:
         if args.org_id is not None:
             org_ids = [args.org_id]
         else:
-            org_ids = await get_active_org_ids(prod_pool)
+            raise RuntimeError(
+                "--org-id is required; dynamic org discovery from MySQL has been removed."
+            )
 
         jobs = list(TABLE_REGISTRY)
         if args.table:
@@ -379,7 +337,7 @@ async def run_all(args: argparse.Namespace) -> None:
                 jobs,
                 period_start,
                 period_end,
-                prod_pool,
+                analytics_client,
                 wh_pool,
                 etl_logger,
                 dry_run=args.dry_run,
@@ -403,13 +361,13 @@ async def run_all(args: argparse.Namespace) -> None:
             f"Rows inserted: {total_inserted}  |  Rows updated: {total_updated}"
         )
     finally:
-        await prod_pool.close()
+        await http_client.aclose()
         await wh_pool.close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="ETL: Production DB → Analytics Warehouse",
+        description="ETL: Analytics Backend → Analytics Warehouse",
     )
     parser.add_argument(
         "--mode",
