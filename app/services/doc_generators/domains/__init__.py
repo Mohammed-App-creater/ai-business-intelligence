@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.prompts.types import DocGenData
 from app.services.analytics_client import AnalyticsClient
 from app.services.db.warehouse_client import WarehouseClient
-from app.services.doc_generator.domains.revenue import generate_revenue_docs
+from app.services.doc_generators.domains.revenue import generate_revenue_docs
 from app.services.embeddings.embedding_client import EmbeddingClient
 from app.services.llm.llm_gateway import LLMGateway
 from app.services.llm.types import UseCase
