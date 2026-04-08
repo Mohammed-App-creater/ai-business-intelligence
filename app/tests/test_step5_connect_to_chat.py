@@ -37,7 +37,7 @@ from revenue_doc_handler import (
     CHUNK_GENERATORS,
 )
 from query_analyzer_revenue_keywords import RAG_KEYWORD_GROUPS
-from revenue_fixtures import (
+from mocks.revenue_fixtures import (
     MONTHLY_SUMMARY,
     PAYMENT_TYPES,
     STAFF_REVENUE,
