@@ -92,3 +92,19 @@ async def test_get_location_revenue_summary(mock_pool, mock_conn):
     sql, params = _sql_params(mock_conn.fetch.call_args)
     assert "business_id" in sql.lower()
     assert params[0] == SAMPLE_ORG_ID
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        wh_revenue.get_payment_type_breakdown,
+        wh_revenue.get_staff_revenue,
+        wh_revenue.get_location_revenue,
+        wh_revenue.get_promo_impact,
+        wh_revenue.get_failed_refunds,
+    ],
+)
+@pytest.mark.asyncio
+async def test_revenue_stub_methods_raise_not_implemented(mock_pool, fn):
+    with pytest.raises(NotImplementedError):
+        await fn(mock_pool, SAMPLE_ORG_ID, months=3)

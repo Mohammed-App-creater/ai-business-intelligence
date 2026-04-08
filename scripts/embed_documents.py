@@ -16,7 +16,6 @@ Usage
     python scripts/embed_documents.py --dry-run
 """
 from __future__ import annotations
-from app.services.doc_generators.domains.revenue import generate_revenue_docs
 
 import argparse
 import asyncio
