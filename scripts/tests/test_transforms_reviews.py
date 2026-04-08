@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from scripts.etl.transforms.reviews import transform_reviews, warehouse_keys_reviews
+from etl.transforms.reviews import transform_reviews, warehouse_keys_reviews
 
 
 def _emp(**kw):

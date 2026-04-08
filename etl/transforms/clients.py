@@ -5,7 +5,7 @@ import logging
 from datetime import date
 from typing import Any
 
-from scripts.etl.transforms._common import icount, money, safe_div, to_date
+from etl.transforms._common import icount, money, safe_div, to_date
 
 _log = logging.getLogger(__name__)
 

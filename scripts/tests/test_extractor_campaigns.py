@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from scripts.etl.extractors.campaigns import CampaignsExtractor
+from etl.extractors.campaigns import CampaignsExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 
@@ -62,7 +62,7 @@ async def test_campaigns_output_has_required_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_campaigns_uses_tenant_id() -> None:
-    import scripts.etl.extractors.campaigns as mod
+    import etl.extractors.campaigns as mod
 
     assert "TenantID" in mod._SQL
     assert "OrganizationId" not in mod._SQL
@@ -70,14 +70,14 @@ async def test_campaigns_uses_tenant_id() -> None:
 
 @pytest.mark.asyncio
 async def test_campaigns_uses_successed_column() -> None:
-    import scripts.etl.extractors.campaigns as mod
+    import etl.extractors.campaigns as mod
 
     assert "Successed" in mod._SQL
 
 
 @pytest.mark.asyncio
 async def test_campaigns_excludes_deleted_status() -> None:
-    import scripts.etl.extractors.campaigns as mod
+    import etl.extractors.campaigns as mod
 
     assert "Status != 'Delete'" in mod._SQL
 

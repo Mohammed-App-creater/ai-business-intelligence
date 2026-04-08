@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from scripts.etl.loaders.daily_revenue import DailyRevenueLoader
+from etl.loaders.daily_revenue import DailyRevenueLoader
 from scripts.tests.conftest import make_mock_wh_pool
 
 

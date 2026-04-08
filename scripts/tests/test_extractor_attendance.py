@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from scripts.etl.extractors.attendance import AttendanceExtractor
+from etl.extractors.attendance import AttendanceExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 
@@ -42,21 +42,21 @@ async def test_attendance_passes_date_range_to_query() -> None:
 
 @pytest.mark.asyncio
 async def test_attendance_returns_raw_records() -> None:
-    import scripts.etl.extractors.attendance as mod
+    import etl.extractors.attendance as mod
 
     assert "GROUP BY" not in mod._SQL.upper()
 
 
 @pytest.mark.asyncio
 async def test_attendance_joins_tbl_emp() -> None:
-    import scripts.etl.extractors.attendance as mod
+    import etl.extractors.attendance as mod
 
     assert "JOIN tbl_emp" in mod._SQL
 
 
 @pytest.mark.asyncio
 async def test_attendance_includes_time_columns() -> None:
-    import scripts.etl.extractors.attendance as mod
+    import etl.extractors.attendance as mod
 
     assert "time_sign_in" in mod._SQL
     assert "time_sign_out" in mod._SQL

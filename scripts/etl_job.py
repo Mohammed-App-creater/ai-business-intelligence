@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Callable
 
-from scripts.etl.base import ETLLogger, run_etl_job
-from scripts.etl.loaders import (
+from etl.base import ETLLogger, run_etl_job
+from etl.loaders import (
     DailyRevenueLoader,
     RevenueLoader,
     PaymentsLoader,
@@ -37,7 +37,7 @@ from scripts.etl.loaders import (
     # ReviewsLoader,
     # AttendanceLoader,
 )
-from scripts.etl.transforms import (
+from etl.transforms import (
     transform_daily_revenue,
     transform_payments,
     transform_revenue,

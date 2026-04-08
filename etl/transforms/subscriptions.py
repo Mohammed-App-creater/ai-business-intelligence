@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from scripts.etl.transforms._common import as_bool, icount, money, safe_div, to_date
+from etl.transforms._common import as_bool, icount, money, safe_div, to_date
 
 _log = logging.getLogger(__name__)
 

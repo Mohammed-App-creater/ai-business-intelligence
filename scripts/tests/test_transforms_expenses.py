@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from scripts.etl.transforms.expenses import transform_expenses, warehouse_keys_expenses
+from etl.transforms.expenses import transform_expenses, warehouse_keys_expenses
 
 
 def _row(**kw):

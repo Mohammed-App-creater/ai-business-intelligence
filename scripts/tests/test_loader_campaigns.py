@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from scripts.etl.loaders.campaigns import CampaignsLoader
+from etl.loaders.campaigns import CampaignsLoader
 from scripts.tests.conftest import make_mock_wh_pool
 
 

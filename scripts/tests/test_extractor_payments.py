@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from scripts.etl.extractors.payments import PaymentsExtractor
+from etl.extractors.payments import PaymentsExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 

@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from scripts.etl.loaders.payments import PaymentsLoader
+from etl.loaders.payments import PaymentsLoader
 from scripts.tests.conftest import make_mock_wh_pool
 
 

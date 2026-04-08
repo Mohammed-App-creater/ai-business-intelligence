@@ -1,7 +1,7 @@
 """Client lifetime metrics extractor."""
 from __future__ import annotations
 
-from scripts.etl.base import BaseExtractor
+from etl.base import BaseExtractor
 
 _SQL_VISITS = """
 SELECT

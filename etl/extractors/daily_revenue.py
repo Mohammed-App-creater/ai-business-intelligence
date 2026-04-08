@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from datetime import date
 
-from scripts.etl.base import BaseExtractor
-from scripts.etl.extractors._util import period_end_exclusive
+from etl.base import BaseExtractor
+from etl.extractors._util import period_end_exclusive
 
 _SQL_PER_LOCATION = """
 SELECT

@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from scripts.etl.loaders.subscriptions import SubscriptionsLoader
+from etl.loaders.subscriptions import SubscriptionsLoader
 from scripts.tests.conftest import make_mock_wh_pool
 
 

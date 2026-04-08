@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from scripts.etl.loaders.expenses import ExpensesLoader
+from etl.loaders.expenses import ExpensesLoader
 from scripts.tests.conftest import make_mock_wh_pool
 
 

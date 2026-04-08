@@ -17,15 +17,13 @@ import argparse
 from datetime import date
 from dateutil.relativedelta import relativedelta
 
-# Resolve project root so sibling packages are importable regardless of CWD
-_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-_TRANSFORMS_DIR = os.path.join(_PROJECT_ROOT, "scripts", "etl", "transforms")
-for _p in (_PROJECT_ROOT, _TRANSFORMS_DIR):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+# Resolve project root so app/ and etl/ are importable regardless of CWD
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from app.services.analytics_client import AnalyticsClient
-from scripts.etl.transforms.revenue_etl import RevenueExtractor
+from etl.transforms.revenue_etl import RevenueExtractor
 
 
 ANALYTICS_BASE_URL = "https://your-analytics-backend.example.com"  # update before running

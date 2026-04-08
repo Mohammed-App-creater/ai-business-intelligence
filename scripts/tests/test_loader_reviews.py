@@ -5,7 +5,7 @@ from datetime import date
 
 import pytest
 
-from scripts.etl.loaders.reviews import ReviewsLoader
+from etl.loaders.reviews import ReviewsLoader
 from scripts.tests.conftest import make_mock_wh_pool
 
 

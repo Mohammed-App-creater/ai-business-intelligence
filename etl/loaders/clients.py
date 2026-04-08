@@ -1,7 +1,7 @@
 """Loader for wh_client_metrics."""
 from __future__ import annotations
 
-from scripts.etl.base import BaseLoader
+from etl.base import BaseLoader
 
 
 class ClientsLoader(BaseLoader):

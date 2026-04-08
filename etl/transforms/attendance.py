@@ -4,8 +4,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from scripts.etl.base import parse_time_str
-from scripts.etl.transforms._common import icount, safe_div, to_date
+from etl.base import parse_time_str
+from etl.transforms._common import icount, safe_div, to_date
 
 _log = logging.getLogger(__name__)
 

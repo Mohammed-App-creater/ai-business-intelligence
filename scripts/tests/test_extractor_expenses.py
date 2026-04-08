@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from scripts.etl.extractors.expenses import ExpensesExtractor
+from etl.extractors.expenses import ExpensesExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 
@@ -67,13 +67,13 @@ async def test_expenses_output_has_required_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_expenses_filters_deleted() -> None:
-    import scripts.etl.extractors.expenses as mod
+    import etl.extractors.expenses as mod
 
     assert "isDeleted = 0" in mod._SQL
 
 
 @pytest.mark.asyncio
 async def test_expenses_null_category_defaulted() -> None:
-    import scripts.etl.extractors.expenses as mod
+    import etl.extractors.expenses as mod
 
     assert "Uncategorised" in mod._SQL

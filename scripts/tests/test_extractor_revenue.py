@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from scripts.etl.extractors.revenue import RevenueExtractor
+from etl.extractors.revenue import RevenueExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 EXPECTED_KEYS = {

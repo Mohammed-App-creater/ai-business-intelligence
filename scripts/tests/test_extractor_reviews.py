@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from scripts.etl.extractors.reviews import ReviewsExtractor
+from etl.extractors.reviews import ReviewsExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 

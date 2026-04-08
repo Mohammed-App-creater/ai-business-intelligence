@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from scripts.etl.transforms.subscriptions import (
+from etl.transforms.subscriptions import (
     transform_subscriptions,
     warehouse_keys_subscriptions,
 )

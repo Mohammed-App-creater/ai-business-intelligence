@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from scripts.etl.transforms.clients import transform_clients, warehouse_keys_clients
+from etl.transforms.clients import transform_clients, warehouse_keys_clients
 
 
 def _row(**kw):

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from scripts.etl.extractors.clients import ClientsExtractor
+from etl.extractors.clients import ClientsExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_ORG_ID, make_mock_pool
 
 

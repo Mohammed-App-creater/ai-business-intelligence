@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from scripts.etl.transforms.revenue import transform_revenue, warehouse_keys_revenue
+from etl.transforms.revenue import transform_revenue, warehouse_keys_revenue
 
 
 def test_revenue_empty_input_returns_empty_list() -> None:

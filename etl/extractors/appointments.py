@@ -4,8 +4,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from scripts.etl.base import BaseExtractor
-from scripts.etl.extractors._util import period_end_exclusive
+from etl.base import BaseExtractor
+from etl.extractors._util import period_end_exclusive
 
 _SQL_CALENDAR_PER_LOC = """
 SELECT

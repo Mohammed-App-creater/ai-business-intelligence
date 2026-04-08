@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 
-from scripts.etl.extractors.subscriptions import SubscriptionsExtractor
+from etl.extractors.subscriptions import SubscriptionsExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 
@@ -43,7 +43,7 @@ async def test_subscriptions_passes_date_range_to_query() -> None:
 
 @pytest.mark.asyncio
 async def test_subscriptions_uses_org_id_col() -> None:
-    import scripts.etl.extractors.subscriptions as mod
+    import etl.extractors.subscriptions as mod
 
     assert "OrgId" in mod._SQL
     assert "OrganizationId" not in mod._SQL
@@ -51,7 +51,7 @@ async def test_subscriptions_uses_org_id_col() -> None:
 
 @pytest.mark.asyncio
 async def test_subscriptions_includes_both_active_and_new() -> None:
-    import scripts.etl.extractors.subscriptions as mod
+    import etl.extractors.subscriptions as mod
 
     assert "Active = 1" in mod._SQL
     assert "SubCreateDate" in mod._SQL

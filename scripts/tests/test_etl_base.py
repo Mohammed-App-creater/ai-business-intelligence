@@ -1,5 +1,5 @@
 """
-Unit tests for scripts.etl.base — mocked pools only, no real DB.
+Unit tests for etl.base — mocked pools only, no real DB.
 """
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
-from scripts.etl.base import (
+from etl.base import (
     BaseExtractor,
     BaseLoader,
     ETLLogger,

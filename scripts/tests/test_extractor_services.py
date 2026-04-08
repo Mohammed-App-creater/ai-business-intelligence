@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from scripts.etl.extractors.services import ServicesExtractor
+from etl.extractors.services import ServicesExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 
@@ -77,6 +77,6 @@ async def test_services_output_has_service_name() -> None:
 
 @pytest.mark.asyncio
 async def test_services_null_service_name_defaulted() -> None:
-    import scripts.etl.extractors.services as services_mod
+    import etl.extractors.services as services_mod
 
     assert "Unknown Service" in services_mod._SQL
