@@ -57,12 +57,70 @@ class AnalysisResult:
 # Rule definitions
 # ---------------------------------------------------------------------------
 
-RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
+REVENUE_KEYWORD_GROUP: dict[str, list[str]] = {
     "financial": [
+        # Existing terms — kept as-is
         "revenue", "profit", "income", "earnings", "sales", "turnover",
         "margin", "cost", "expense", "invoice", "payment", "refund",
         "price", "pricing", "discount", "cashflow", "cash flow",
-    ],
+
+        # Revenue-specific — covers all 20 Step 1 questions
+        "total revenue", "service revenue", "gross revenue",
+        "average ticket", "avg ticket", "ticket value", "ticket size",
+        "per visit", "per appointment",
+
+        # Trends & growth (Q5, Q16, Q17)
+        "trending", "trend", "growing", "growth", "shrinking",
+        "going up", "going down", "revenue trend",
+        "business growing", "business shrinking",
+
+        # Period comparisons (Q4, Q7)
+        "month over month", "mom", "year over year", "yoy",
+        "change in revenue", "compare", "comparison",
+
+        # Payment types (Q10)
+        "cash", "card", "credit card", "payment type", "payment method",
+        "payment breakdown",
+
+        # Gift cards (Q11, LQ10)
+        "gift card", "gift cards", "gift card redemption", "redeemed",
+
+        # Promos & discounts (Q12, LQ9)
+        "promo", "promo code", "promotion", "coupon", "promo cost",
+        "discount cost",
+
+        # Tips (Q18)
+        "tips", "tip", "gratuity", "staff tips",
+
+        # Tax (Q19)
+        "tax", "taxes", "tax collected",
+
+        # Failed / refunded (Q20, Q15)
+        "refunded", "failed payment", "canceled", "cancelled",
+        "no-show", "no show", "missed appointment", "lost revenue",
+
+        # Root cause (Q13, Q14)
+        "revenue dropped", "revenue fell", "revenue decrease",
+        "revenue increase", "less busy", "fewer visits",
+        "why did revenue", "why was revenue",
+
+        # Staff revenue (Q8)
+        "who made the most", "top staff", "staff revenue",
+        "which employee", "which staff", "best performer",
+
+        # Location revenue (Q9, LQ1–LQ10)
+        "which location", "by location", "location revenue",
+        "top location", "best location", "worst location",
+        "location breakdown", "location comparison",
+
+        # Advice (Q16, Q17)
+        "increase revenue", "improve revenue", "boost revenue",
+        "should i be worried", "is my business",
+    ]
+}
+
+RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
+    "financial": REVENUE_KEYWORD_GROUP["financial"],
     "appointments": [
         "appointment", "appointments", "booking", "bookings", "schedule",
         "cancellation", "cancellations", "cancellation rate", "no-show",

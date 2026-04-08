@@ -10,3 +10,80 @@ Content-Type: application/json
   "business_id": "salon_123",
   "question": "Why did my revenue decrease this month?"
 }
+
+
+# ── Mock Analytics Server (uvicorn tests.mocks.mock_analytics_server:app --port 8001) ──
+
+###
+GET http://localhost:8001/health
+
+
+###
+POST http://localhost:8001/api/v1/leo/revenue/monthly-summary
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "group_by": "month"
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/revenue/payment-types
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31"
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/revenue/by-staff
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "limit": 10
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/revenue/by-location
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "group_by": "month"
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/revenue/promo-impact
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31"
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/revenue/failed-refunds
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31"
+}
+
+# Mock accepts business_id: 42, 99, or 101 only (others → 403).

@@ -256,7 +256,7 @@ async def generate_revenue_docs(
         doc_id = _make_doc_id(org_id, doc_type, row)
 
         # Skip if already embedded (unless --force)
-        if not force and await vector_store.exists(doc_id):
+        if not force and await vector_store.exists(str(org_id), doc_id):
             skipped += 1
             continue
 

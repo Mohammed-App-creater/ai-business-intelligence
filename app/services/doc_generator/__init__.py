@@ -11,15 +11,18 @@ from calendar import monthrange
 from datetime import date, datetime
 from typing import Any
 
+from app.core.config import settings
 from app.prompts.types import DocGenData
+from app.services.analytics_client import AnalyticsClient
 from app.services.db.warehouse_client import WarehouseClient
+from app.services.doc_generator.domains.revenue import generate_revenue_docs
 from app.services.embeddings.embedding_client import EmbeddingClient
 from app.services.llm.llm_gateway import LLMGateway
 from app.services.llm.types import UseCase
 from app.services.vector_store import VectorStore
+from etl.transforms.revenue_etl import RevenueExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
-    "revenue":       "_gen_revenue",
     "staff":         "_gen_staff",
     "services":      "_gen_services",
     "clients":       "_gen_clients",
@@ -31,6 +34,9 @@ _DOMAIN_HANDLERS: dict[str, str] = {
     "attendance":    "_gen_attendance",
     "subscriptions": "_gen_subscriptions",
 }
+
+# Order used when domain=None (revenue uses ETL analytics + generate_revenue_docs).
+_DEFAULT_DOMAINS: tuple[str, ...] = ("revenue",) + tuple(_DOMAIN_HANDLERS.keys())
 
 
 class DocGenerator:
@@ -547,11 +553,41 @@ class DocGenerator:
         months:       int = 3,
         force:        bool = False,
     ) -> tuple[int, int, int]:
+        if domain == "revenue":
+            warehouse_rows = await self._fetch_revenue_warehouse_rows(
+                org_id, period_start, months
+            )
+            result = await generate_revenue_docs(
+                org_id, warehouse_rows, self._emb, self._vs, force
+            )
+            c2, s2, f2 = await self._gen_revenue(org_id, period_start, months, force)
+            return (
+                result["docs_created"] + c2,
+                result["docs_skipped"] + s2,
+                result["docs_failed"] + f2,
+            )
         handler_name = _DOMAIN_HANDLERS.get(domain)
         if not handler_name:
             return 0, 0, 0
         handler = getattr(self, handler_name)
         return await handler(org_id, period_start, months, force)
+
+    async def _fetch_revenue_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> list[dict]:
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return []
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = RevenueExtractor(client=client)
+        return await extractor.run(org_id, start_date, end_date)
 
     async def generate_all(
         self,
@@ -561,17 +597,34 @@ class DocGenerator:
         domain:       str | None = None,
         force:        bool = False,
     ) -> dict:
-        domains = [domain] if domain else list(_DOMAIN_HANDLERS.keys())
+        domains = [domain] if domain else list(_DEFAULT_DOMAINS)
         created = skipped = failed = 0
         errors: list[str] = []
         for dom in domains:
             try:
-                c, s, f = await self.generate_domain(
-                    org_id, dom, period_start, months, force
-                )
-                created += c
-                skipped += s
-                failed += f
+                if dom == "revenue":
+                    warehouse_rows = await self._fetch_revenue_warehouse_rows(
+                        org_id, period_start, months
+                    )
+                    result = await generate_revenue_docs(
+                        org_id, warehouse_rows, self._emb, self._vs, force
+                    )
+                    created += result["docs_created"]
+                    skipped += result["docs_skipped"]
+                    failed += result["docs_failed"]
+                    c2, s2, f2 = await self._gen_revenue(
+                        org_id, period_start, months, force
+                    )
+                    created += c2
+                    skipped += s2
+                    failed += f2
+                else:
+                    c, s, f = await self.generate_domain(
+                        org_id, dom, period_start, months, force
+                    )
+                    created += c
+                    skipped += s
+                    failed += f
             except Exception as e:
                 self._logger.exception("generate_domain failed domain=%s", dom)
                 errors.append(f"{dom}: {e}")
@@ -627,6 +680,280 @@ class DocGenerator:
                 skipped += 1
             else:
                 failed += 1
+
+        # Additional revenue doc types from analytics backend
+        for sub_gen in (
+            self._gen_revenue_payment_types,
+            self._gen_revenue_by_staff,
+            self._gen_revenue_by_location,
+            self._gen_revenue_promo_impact,
+            self._gen_revenue_failed_refunds,
+        ):
+            try:
+                c, s, f = await sub_gen(org_id, period_start, months, force)
+                created += c
+                skipped += s
+                failed += f
+            except Exception:
+                self._logger.warning(
+                    "revenue sub-generator %s failed for org=%d",
+                    sub_gen.__name__, org_id, exc_info=True,
+                )
+
+        return created, skipped, failed
+
+    async def _gen_revenue_payment_types(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        """Payment type breakdown — cash vs card vs gift card %."""
+        created = skipped = failed = 0
+        tenant = str(org_id)
+        periods = self._month_periods(period_start, months)
+        ps = periods[0] if periods else self._norm_period_start(date.today())
+        pl = self._period_label(ps)
+
+        rows = await self._wh.revenue.get_payment_type_breakdown(org_id, months=months)
+        if not rows:
+            return 0, 0, 0
+
+        lines = [f"Period         : {pl}", "Payment Types  :"]
+        for r in sorted(rows, key=lambda x: float(x.get("revenue") or 0), reverse=True):
+            pt = r.get("payment_type", "Other")
+            rev = float(r.get("revenue") or 0)
+            pct = float(r.get("pct_of_total") or 0)
+            cnt = int(r.get("visit_count") or 0)
+            lines.append(f"  {pt:<12}: {self._f_money(rev)} ({pct:.1f}%, {cnt} visits)")
+        if rows:
+            top = max(rows, key=lambda x: float(x.get("revenue") or 0))
+            lines.append(f"Dominant Method: {top.get('payment_type')} at {float(top.get('pct_of_total') or 0):.1f}%")
+
+        kpi = "\n".join(lines)
+        doc_id = f"{org_id}_revenue_payment_types_{self._doc_month_suffix(ps)}"
+        data = DocGenData(
+            business_id=str(org_id), business_type=self._biz_type,
+            period=pl, doc_domain="revenue", doc_type="payment_type_breakdown",
+            kpi_block=kpi,
+        )
+        chunk = await self._make_chunk_text(org_id, data)
+        st = await self._store_doc(
+            tenant, doc_id, "revenue", "payment_type_breakdown", chunk, ps, {}, force
+        )
+        if st == "created":
+            created += 1
+        elif st == "skipped":
+            skipped += 1
+        else:
+            failed += 1
+        return created, skipped, failed
+
+    async def _gen_revenue_by_staff(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        """Staff revenue ranking — one doc per staff member."""
+        created = skipped = failed = 0
+        tenant = str(org_id)
+        periods = self._month_periods(period_start, months)
+        ps = periods[0] if periods else self._norm_period_start(date.today())
+        pl = self._period_label(ps)
+
+        rows = await self._wh.revenue.get_staff_revenue(org_id, months=months)
+        if not rows:
+            return 0, 0, 0
+
+        for r in rows:
+            name = r.get("staff_name") or "Unknown"
+            rev = float(r.get("service_revenue") or 0)
+            tips = float(r.get("tips_collected") or 0)
+            vis = int(r.get("visit_count") or 0)
+            tkt = float(r.get("avg_ticket") or 0)
+            rank = int(r.get("revenue_rank") or 0)
+            eid = int(r.get("emp_id") or 0)
+
+            kpi = "\n".join([
+                f"Staff Member   : {name}",
+                f"Period         : {pl}",
+                f"Revenue Rank   : #{rank}",
+                f"Service Revenue: {self._f_money(rev)}",
+                f"Visits         : {vis}",
+                f"Avg Ticket     : {self._f_money_dec(tkt)}",
+                f"Tips Collected : {self._f_money(tips)}",
+            ])
+            doc_id = f"{org_id}_revenue_staff_{eid}_{self._doc_month_suffix(ps)}"
+            data = DocGenData(
+                business_id=str(org_id), business_type=self._biz_type,
+                period=pl, doc_domain="revenue", doc_type="staff_revenue",
+                kpi_block=kpi, entity_name=name,
+            )
+            chunk = await self._make_chunk_text(org_id, data)
+            st = await self._store_doc(
+                tenant, doc_id, "revenue", "staff_revenue", chunk, ps, {}, force
+            )
+            if st == "created":
+                created += 1
+            elif st == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+        return created, skipped, failed
+
+    async def _gen_revenue_by_location(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        """Location revenue breakdown — one doc per location per period."""
+        created = skipped = failed = 0
+        tenant = str(org_id)
+        periods = self._month_periods(period_start, months)
+
+        rows = await self._wh.revenue.get_location_revenue(org_id, months=months)
+        if not rows:
+            return 0, 0, 0
+
+        for r in rows:
+            loc_id = int(r.get("location_id") or 0)
+            loc_name = r.get("location_name") or f"Location {loc_id}"
+            period_str = str(r.get("period") or "")
+            rev = float(r.get("service_revenue") or 0)
+            pct = float(r.get("pct_of_total_revenue") or 0)
+            vis = int(r.get("visit_count") or 0)
+            tkt = float(r.get("avg_ticket") or 0)
+            tips = float(r.get("total_tips") or 0)
+            disc = float(r.get("total_discounts") or 0)
+            gc = float(r.get("gc_redemptions") or 0)
+            mom = r.get("mom_growth_pct")
+            mom_str = f"{mom:+.1f}% vs previous period" if mom is not None else "N/A (first period)"
+
+            kpi = "\n".join([
+                f"Location       : {loc_name}",
+                f"Period         : {period_str}",
+                f"Service Revenue: {self._f_money(rev)} ({pct:.1f}% of total)",
+                f"Visits         : {vis}",
+                f"Avg Ticket     : {self._f_money_dec(tkt)}",
+                f"Tips           : {self._f_money(tips)}",
+                f"Discounts      : {self._f_money(disc)}",
+                f"GC Redemptions : {self._f_money(gc)}",
+                f"MoM Change     : {mom_str}",
+            ])
+
+            try:
+                ps = date.fromisoformat(f"{period_str}-01")
+            except ValueError:
+                ps = periods[0] if periods else self._norm_period_start(date.today())
+
+            doc_id = f"{org_id}_revenue_loc_{loc_id}_{period_str.replace('-', '_')}"
+            data = DocGenData(
+                business_id=str(org_id), business_type=self._biz_type,
+                period=period_str, doc_domain="revenue", doc_type="location_revenue",
+                kpi_block=kpi, entity_name=loc_name,
+            )
+            chunk = await self._make_chunk_text(org_id, data)
+            st = await self._store_doc(
+                tenant, doc_id, "revenue", "location_revenue", chunk, ps, {}, force
+            )
+            if st == "created":
+                created += 1
+            elif st == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+        return created, skipped, failed
+
+    async def _gen_revenue_promo_impact(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        """Promo discount impact — single aggregate doc."""
+        created = skipped = failed = 0
+        tenant = str(org_id)
+        periods = self._month_periods(period_start, months)
+        ps = periods[0] if periods else self._norm_period_start(date.today())
+        pl = self._period_label(ps)
+
+        rows = await self._wh.revenue.get_promo_impact(org_id, months=months)
+        if not rows:
+            return 0, 0, 0
+
+        total_disc = sum(float(r.get("total_discount_given") or 0) for r in rows)
+        total_uses = sum(int(r.get("times_used") or 0) for r in rows)
+        lines = [
+            f"Period         : {pl}",
+            f"Total Discount : {self._f_money(total_disc)} across {total_uses} uses",
+            "Promo Codes    :",
+        ]
+        for r in rows:
+            code = r.get("promo_code", "?")
+            desc = r.get("promo_description", "")
+            loc = r.get("location_name", "all locations")
+            uses = int(r.get("times_used") or 0)
+            disc = float(r.get("total_discount_given") or 0)
+            lines.append(f"  '{code}' ({desc}) @ {loc} — {uses}x = {self._f_money(disc)} off")
+
+        kpi = "\n".join(lines)
+        doc_id = f"{org_id}_revenue_promos_{self._doc_month_suffix(ps)}"
+        data = DocGenData(
+            business_id=str(org_id), business_type=self._biz_type,
+            period=pl, doc_domain="revenue", doc_type="promo_impact",
+            kpi_block=kpi,
+        )
+        chunk = await self._make_chunk_text(org_id, data)
+        st = await self._store_doc(
+            tenant, doc_id, "revenue", "promo_impact", chunk, ps, {}, force
+        )
+        if st == "created":
+            created += 1
+        elif st == "skipped":
+            skipped += 1
+        else:
+            failed += 1
+        return created, skipped, failed
+
+    async def _gen_revenue_failed_refunds(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        """Failed / refunded / canceled visit revenue loss."""
+        created = skipped = failed = 0
+        tenant = str(org_id)
+        periods = self._month_periods(period_start, months)
+        ps = periods[0] if periods else self._norm_period_start(date.today())
+        pl = self._period_label(ps)
+
+        rows = await self._wh.revenue.get_failed_refunds(org_id, months=months)
+        if not rows:
+            return 0, 0, 0
+
+        total_lost = sum(float(r.get("lost_revenue") or 0) for r in rows)
+        total_vis = sum(int(r.get("visit_count") or 0) for r in rows)
+        lines = [
+            f"Period         : {pl}",
+            f"Total Lost Rev : {self._f_money(total_lost)} across {total_vis} affected visits",
+            "Breakdown      :",
+        ]
+        for r in rows:
+            label = r.get("status_label", "?")
+            vis = int(r.get("visit_count") or 0)
+            lost = float(r.get("lost_revenue") or 0)
+            avg = float(r.get("avg_lost_per_visit") or 0)
+            lines.append(
+                f"  {label:<12}: {vis} visits = {self._f_money(lost)} lost "
+                f"(avg {self._f_money_dec(avg)}/visit)"
+            )
+        lines.append("Note           : No-show cost requires appointment data (not included here).")
+
+        kpi = "\n".join(lines)
+        doc_id = f"{org_id}_revenue_failed_{self._doc_month_suffix(ps)}"
+        data = DocGenData(
+            business_id=str(org_id), business_type=self._biz_type,
+            period=pl, doc_domain="revenue", doc_type="failed_refunds",
+            kpi_block=kpi,
+        )
+        chunk = await self._make_chunk_text(org_id, data)
+        st = await self._store_doc(
+            tenant, doc_id, "revenue", "failed_refunds", chunk, ps, {}, force
+        )
+        if st == "created":
+            created += 1
+        elif st == "skipped":
+            skipped += 1
+        else:
+            failed += 1
         return created, skipped, failed
 
     async def _gen_staff(

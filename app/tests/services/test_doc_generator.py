@@ -12,6 +12,9 @@ import pytest
 from app.prompts.types import DocGenData
 from app.services.doc_generator import DocGenerator, _DOMAIN_HANDLERS
 from app.services.llm.types import UseCase
+
+_GENERATE_REVENUE_DOCS = "app.services.doc_generator.domains.revenue.generate_revenue_docs"
+_ZERO_REV_RESULT = {"docs_created": 0, "docs_skipped": 0, "docs_failed": 0}
 from app.prompts.doc_generation import anthropic as dg_anthropic
 from app.prompts.doc_generation import openai as dg_openai
 
@@ -55,6 +58,11 @@ def mock_wh():
          "other_revenue": 500.0, "total_gc_amount": 500.0,
          "cancelled_visit_count": 0}
     ])
+    wh.revenue.get_payment_type_breakdown = AsyncMock(return_value=[])
+    wh.revenue.get_staff_revenue = AsyncMock(return_value=[])
+    wh.revenue.get_location_revenue = AsyncMock(return_value=[])
+    wh.revenue.get_promo_impact = AsyncMock(return_value=[])
+    wh.revenue.get_failed_refunds = AsyncMock(return_value=[])
     wh.staff = MagicMock()
     wh.staff.get_staff_monthly_performance = AsyncMock(return_value=[
         {"employee_id": 7, "employee_name": "Sarah", "period_start": date(2026, 1, 1),
@@ -481,6 +489,22 @@ async def test_store_doc_force_skips_hash_check(gen, mock_vs):
 @pytest.mark.asyncio
 async def test_generate_all_returns_summary_dict(mock_wh, mock_gateway, mock_emb, mock_vs):
     with ExitStack() as stack:
+        stack.enter_context(
+            patch.object(
+                DocGenerator,
+                "_fetch_revenue_warehouse_rows",
+                AsyncMock(return_value=[]),
+            )
+        )
+        stack.enter_context(
+            patch(
+                _GENERATE_REVENUE_DOCS,
+                AsyncMock(return_value=_ZERO_REV_RESULT),
+            )
+        )
+        stack.enter_context(
+            patch.object(DocGenerator, "_gen_revenue", AsyncMock(return_value=(0, 0, 0)))
+        )
         for _dom, meth in _DOMAIN_HANDLERS.items():
             stack.enter_context(
                 patch.object(DocGenerator, meth, AsyncMock(return_value=(0, 0, 0)))
@@ -498,37 +522,70 @@ async def test_generate_all_returns_summary_dict(mock_wh, mock_gateway, mock_emb
 async def test_generate_all_calls_all_domain_handlers(mock_wh, mock_gateway, mock_emb, mock_vs):
     mocks = {}
     with ExitStack() as stack:
+        stack.enter_context(
+            patch.object(
+                DocGenerator,
+                "_fetch_revenue_warehouse_rows",
+                AsyncMock(return_value=[]),
+            )
+        )
+        m_rev = AsyncMock(return_value=_ZERO_REV_RESULT)
+        stack.enter_context(patch(_GENERATE_REVENUE_DOCS, m_rev))
+        mocks["generate_revenue_docs"] = m_rev
+        m_wh_rev = AsyncMock(return_value=(0, 0, 0))
+        stack.enter_context(patch.object(DocGenerator, "_gen_revenue", m_wh_rev))
+        mocks["_gen_revenue"] = m_wh_rev
         for _dom, meth in _DOMAIN_HANDLERS.items():
             m = AsyncMock(return_value=(0, 0, 0))
             mocks[meth] = m
             stack.enter_context(patch.object(DocGenerator, meth, m))
         g = DocGenerator(mock_wh, mock_gateway, mock_emb, mock_vs)
         await g.generate_all(ORG_ID, period_start=PERIOD, months=1)
-    for m in mocks.values():
-        assert m.await_count >= 1
+    for name, m in mocks.items():
+        assert m.await_count >= 1, name
 
 
 @pytest.mark.asyncio
 async def test_generate_all_calls_single_domain_when_specified(
     mock_wh, mock_gateway, mock_emb, mock_vs
 ):
-    with patch.object(DocGenerator, "_gen_revenue", AsyncMock(return_value=(0, 0, 0))) as m_rev:
-        with patch.object(DocGenerator, "_gen_staff", AsyncMock(return_value=(0, 0, 0))) as m_st:
-            g = DocGenerator(mock_wh, mock_gateway, mock_emb, mock_vs)
-            await g.generate_all(ORG_ID, period_start=PERIOD, months=1, domain="revenue")
+    with patch.object(
+        DocGenerator, "_fetch_revenue_warehouse_rows", AsyncMock(return_value=[])
+    ):
+        with patch(
+            _GENERATE_REVENUE_DOCS, AsyncMock(return_value=_ZERO_REV_RESULT)
+        ) as m_rev:
+            with patch.object(
+                DocGenerator, "_gen_revenue", AsyncMock(return_value=(0, 0, 0))
+            ) as m_wh:
+                g = DocGenerator(mock_wh, mock_gateway, mock_emb, mock_vs)
+                await g.generate_all(ORG_ID, period_start=PERIOD, months=1, domain="revenue")
     m_rev.assert_awaited()
-    m_st.assert_not_awaited()
+    m_wh.assert_awaited()
 
 
 @pytest.mark.asyncio
 async def test_generate_all_counts_created_docs(mock_wh, mock_gateway, mock_emb, mock_vs):
     with ExitStack() as stack:
         stack.enter_context(
-            patch.object(DocGenerator, "_gen_revenue", AsyncMock(return_value=(2, 0, 0)))
+            patch.object(
+                DocGenerator,
+                "_fetch_revenue_warehouse_rows",
+                AsyncMock(return_value=[]),
+            )
+        )
+        stack.enter_context(
+            patch(
+                _GENERATE_REVENUE_DOCS,
+                AsyncMock(
+                    return_value={"docs_created": 2, "docs_skipped": 0, "docs_failed": 0}
+                ),
+            )
+        )
+        stack.enter_context(
+            patch.object(DocGenerator, "_gen_revenue", AsyncMock(return_value=(0, 0, 0)))
         )
         for _dom, meth in _DOMAIN_HANDLERS.items():
-            if meth == "_gen_revenue":
-                continue
             stack.enter_context(
                 patch.object(DocGenerator, meth, AsyncMock(return_value=(0, 0, 0)))
             )
@@ -545,10 +602,15 @@ async def test_generate_all_continues_after_domain_failure(
         raise RuntimeError("fail")
 
     with ExitStack() as stack:
-        stack.enter_context(patch.object(DocGenerator, "_gen_revenue", side_effect=boom))
+        stack.enter_context(
+            patch.object(
+                DocGenerator,
+                "_fetch_revenue_warehouse_rows",
+                AsyncMock(return_value=[]),
+            )
+        )
+        stack.enter_context(patch(_GENERATE_REVENUE_DOCS, side_effect=boom))
         for _dom, meth in _DOMAIN_HANDLERS.items():
-            if meth == "_gen_revenue":
-                continue
             stack.enter_context(
                 patch.object(DocGenerator, meth, AsyncMock(return_value=(1, 0, 0)))
             )

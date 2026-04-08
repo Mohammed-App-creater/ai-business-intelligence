@@ -84,7 +84,7 @@ def test_from_pool_factory(mock_pool):
 
 def test_total_public_method_count(mock_pool):
     wh = WarehouseClient(mock_pool)
-    assert _total_public_async_methods(wh) == 58
+    assert _total_public_async_methods(wh) == 63
 
 
 @pytest.mark.asyncio
@@ -96,4 +96,16 @@ async def test_delegates_revenue_get_monthly_trend(mock_pool):
         m.return_value = []
         wh = WarehouseClient(mock_pool)
         await wh.revenue.get_monthly_trend(42, months=3)
+        m.assert_awaited_once_with(mock_pool, 42, 3)
+
+
+@pytest.mark.asyncio
+async def test_delegates_revenue_get_payment_type_breakdown(mock_pool):
+    with patch(
+        "app.services.db.warehouse.wh_revenue.get_payment_type_breakdown",
+        new_callable=AsyncMock,
+    ) as m:
+        m.return_value = []
+        wh = WarehouseClient(mock_pool)
+        await wh.revenue.get_payment_type_breakdown(42, months=3)
         m.assert_awaited_once_with(mock_pool, 42, 3)

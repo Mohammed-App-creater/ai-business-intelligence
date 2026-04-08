@@ -15,7 +15,7 @@ Usage:
     clients = await wh.clients.get_churned_clients(org_id)
 
 Domain sub-clients:
-    wh.revenue        → warehouse/wh_revenue.py        (6 functions)
+    wh.revenue        → warehouse/wh_revenue.py        (11 functions)
     wh.staff          → warehouse/wh_staff.py          (6 functions)
     wh.services       → warehouse/wh_services.py       (5 functions)
     wh.clients        → warehouse/wh_clients.py        (6 functions)
@@ -73,6 +73,25 @@ class WarehouseRevenueClient:
         return await wh_revenue.get_location_revenue_summary(
             self._pool, org_id, period_start
         )
+
+    async def get_payment_type_breakdown(
+        self, org_id: int, months: int = 3
+    ) -> list[dict]:
+        return await wh_revenue.get_payment_type_breakdown(
+            self._pool, org_id, months
+        )
+
+    async def get_staff_revenue(self, org_id: int, months: int = 3) -> list[dict]:
+        return await wh_revenue.get_staff_revenue(self._pool, org_id, months)
+
+    async def get_location_revenue(self, org_id: int, months: int = 3) -> list[dict]:
+        return await wh_revenue.get_location_revenue(self._pool, org_id, months)
+
+    async def get_promo_impact(self, org_id: int, months: int = 3) -> list[dict]:
+        return await wh_revenue.get_promo_impact(self._pool, org_id, months)
+
+    async def get_failed_refunds(self, org_id: int, months: int = 3) -> list[dict]:
+        return await wh_revenue.get_failed_refunds(self._pool, org_id, months)
 
 
 class WarehouseStaffClient:
