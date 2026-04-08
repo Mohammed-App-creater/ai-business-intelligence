@@ -13,10 +13,10 @@ import asyncio
 import pytest
 from datetime import date
 
-from analytics_client import AnalyticsClient
-from revenue_etl import RevenueExtractor
-from mock_analytics_server import start_mock_server
-from revenue_fixtures import (
+from app.services.analytics_client import AnalyticsClient
+from etl.transforms.revenue_etl import RevenueExtractor
+from tests.mocks.mock_analytics_server import start_mock_server
+from tests.mocks.revenue_fixtures import (
     MONTHLY_SUMMARY,
     PAYMENT_TYPES,
     STAFF_REVENUE,

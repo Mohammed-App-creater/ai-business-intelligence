@@ -27,7 +27,7 @@ import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from revenue_fixtures import FIXTURES
+from tests.mocks.revenue_fixtures import FIXTURES
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
