@@ -1,6 +1,23 @@
+"""
+LEO AI BI — Analytics Backend Client
+Revenue Domain — Step 4: ETL Wire-Up
+ 
+All methods follow the standard contract:
+    async def get_{domain}_data(self, business_id, start_date, end_date, **kwargs) -> list[dict]
+ 
+Base URL points to the analytics backend built from the Step 3 API spec.
+All endpoints are POST and require business_id + date range.
+"""
+
 import httpx
 from datetime import date
 from app.core.config import settings
+import logging
+ 
+ 
+ 
+logger = logging.getLogger(__name__)
+ 
 
 
 class AnalyticsClientError(Exception):
@@ -77,18 +94,184 @@ class AnalyticsClient:
     Sprint 10 — expenses     ⬜
     Sprint 11 — forms        ⬜
     """
+    
+    def __init__(self, base_url: str, timeout: float = 30.0):
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        
+        
 
-    def __init__(self, http: httpx.AsyncClient):
-        self.revenue = _RevenueClient(http)
-
-    @classmethod
-    def create(cls) -> tuple["AnalyticsClient", httpx.AsyncClient]:
-        headers = {"Content-Type": "application/json"}
-        if settings.ANALYTICS_BACKEND_API_KEY:
-            headers["X-API-Key"] = settings.ANALYTICS_BACKEND_API_KEY
-        http = httpx.AsyncClient(
-            base_url=settings.ANALYTICS_BACKEND_URL,
-            headers=headers,
-            timeout=30.0,
-        )
-        return cls(http), http
+    # -------------------------------------------------------------------------
+    # REVENUE DOMAIN — 6 endpoints
+    # -------------------------------------------------------------------------
+ 
+    async def get_revenue_monthly_summary(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        group_by: str = "month",  # "month" | "week" | "day"
+    ) -> list[dict]:
+        """
+        Monthly (or weekly/daily) revenue summary.
+ 
+        Powers: Q1–Q7, Q13–Q14, Q16–Q19
+        Key fields returned:
+            period, visit_count, service_revenue, total_tips, total_tax,
+            total_collected, total_discounts, gc_redemptions, avg_ticket,
+            mom_growth_pct, refund_count, cancel_count
+        Meta fields:
+            total_service_revenue, total_visits, best_period,
+            worst_period, trend_slope
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "group_by": group_by,
+        }
+        return await self._post("/api/v1/leo/revenue/monthly-summary", payload)
+ 
+    async def get_revenue_payment_types(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        Revenue breakdown by payment type (Cash / Card / GiftCard / etc.)
+ 
+        Powers: Q10
+        Key fields returned:
+            payment_type, visit_count, revenue, pct_of_total
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/revenue/payment-types", payload)
+ 
+    async def get_revenue_by_staff(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        limit: int = 10,
+    ) -> list[dict]:
+        """
+        Staff revenue ranking — top N staff by service revenue.
+ 
+        Powers: Q8
+        Key fields returned:
+            emp_id, staff_name, visit_count, service_revenue,
+            tips_collected, avg_ticket, revenue_rank
+        Note: includes inactive staff with visits in the date range.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "limit": limit,
+        }
+        return await self._post("/api/v1/leo/revenue/by-staff", payload)
+ 
+    async def get_revenue_by_location(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        group_by: str = "month",  # "month" | "total"
+    ) -> list[dict]:
+        """
+        Revenue breakdown per location per period.
+ 
+        Powers: Q9, LQ1–LQ10
+        Key fields returned:
+            location_id, location_name, period, visit_count,
+            service_revenue, total_tips, avg_ticket, total_discounts,
+            gc_redemptions, pct_of_total_revenue, mom_growth_pct
+        Note: single-location businesses return 1 row — not an error.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "group_by": group_by,
+        }
+        return await self._post("/api/v1/leo/revenue/by-location", payload)
+ 
+    async def get_revenue_promo_impact(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        Promo code discount impact — what did promos actually cost?
+ 
+        Powers: Q12, LQ9
+        Key fields returned:
+            promo_code, promo_description, location_id, location_name,
+            times_used, total_discount_given, revenue_after_discount
+        Meta:
+            total_discount_all_promos, promo_visit_count
+        Note: uses tbl_visit.Discount as ground truth, not tbl_promo.Amount.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/revenue/promo-impact", payload)
+ 
+    async def get_revenue_failed_refunds(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        Failed, refunded, and canceled visit revenue loss.
+ 
+        Powers: Q15 (partial), Q20
+        Key fields returned:
+            status_code, status_label, visit_count,
+            lost_revenue, avg_lost_per_visit
+        Meta:
+            total_lost_revenue, total_affected_visits
+ 
+        KNOWN GAP: Q15 (no-show cost) requires tbl_calendarevent.
+        Defer to Appointments domain sprint — /no-show-cost endpoint TBD.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/revenue/failed-refunds", payload)
+ 
+    # -------------------------------------------------------------------------
+    # Internal HTTP helper
+    # -------------------------------------------------------------------------
+ 
+    async def _post(self, path: str, payload: dict) -> list[dict]:
+        url = f"{self.base_url}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                body = response.json()
+                # All analytics endpoints return { "data": [...], "meta": {...} }
+                return body.get("data", [])
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Analytics API HTTP error: %s %s → %s",
+                e.request.method,
+                e.request.url,
+                e.response.status_code,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error("Analytics API request failed: %s", e)
+            raise
