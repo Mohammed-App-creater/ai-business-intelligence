@@ -6,6 +6,10 @@ CLI entry point for the document generation + embedding pipeline.
 Reads from the analytics warehouse, generates human-readable summaries,
 embeds them, and stores them in the vector store.
 
+v1.2 update: production DB connection removed. All data comes from the
+analytics warehouse. org_ids are read from wh_monthly_revenue when
+--org-id is not specified.
+
 Usage
 -----
     python scripts/embed_documents.py                    # all orgs, 3 months
@@ -21,41 +25,42 @@ import argparse
 import asyncio
 import logging
 
-from app.services.db.db_pool import PGPool, PGTarget, DBPool, DBTarget
+from app.services.db.db_pool import PGPool, PGTarget
 from app.services.db.warehouse_client import WarehouseClient
-from app.services.doc_generator import DocGenerator
+from app.services.doc_generators import DocGenerator
 from app.services.embeddings.embedding_client import EmbeddingClient
 from app.services.llm.llm_gateway import LLMGateway
 from app.services.vector_store import VectorStore
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 async def run(args) -> None:
-    prod_pool = await DBPool.from_env(DBTarget.PRODUCTION)
-    wh_pool   = await PGPool.from_env(PGTarget.WAREHOUSE)
-    vec_pool  = await PGPool.from_env(PGTarget.VECTOR)
+    wh_pool  = await PGPool.from_env(PGTarget.WAREHOUSE)
+    vec_pool = await PGPool.from_env(PGTarget.VECTOR)
 
-    gateway   = LLMGateway.from_env()
-    emb       = EmbeddingClient.from_env()
-    wh        = WarehouseClient(wh_pool)
-    vs        = VectorStore(vec_pool)
+    gateway  = LLMGateway.from_env()
+    emb      = EmbeddingClient.from_env()
+    wh       = WarehouseClient(wh_pool)
+    vs       = VectorStore(vec_pool)
 
     if args.org_id:
         org_ids = [args.org_id]
     else:
-        async with prod_pool.acquire() as conn:
-            async with conn.cursor() as cur:
-                await cur.execute(
-                    "SELECT Id FROM tbl_organization "
-                    "WHERE ClientStatus=1 AND IsDeleted=b'1' ORDER BY Id"
-                )
-                rows = await cur.fetchall()
-        org_ids = [r["Id"] for r in rows]
+        # Read distinct business_ids from the warehouse
+        async with wh_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT DISTINCT business_id FROM wh_monthly_revenue "
+                "ORDER BY business_id"
+            )
+        org_ids = [r["business_id"] for r in rows]
 
     logging.info("embed_documents | orgs=%d | months=%d", len(org_ids), args.months)
 
     if args.dry_run:
         logging.info("embed_documents dry-run — skipping generation")
-        await prod_pool.close()
+        logging.info("Would process org_ids: %s", org_ids)
         await wh_pool.close()
         await vec_pool.close()
         return
@@ -74,15 +79,18 @@ async def run(args) -> None:
         total_created += result["docs_created"]
         total_skipped += result["docs_skipped"]
         total_failed  += result["docs_failed"]
-        logging.info("org=%d | created=%d skipped=%d failed=%d",
-                     org_id, result["docs_created"],
-                     result["docs_skipped"], result["docs_failed"])
+        logging.info(
+            "org=%d | created=%d skipped=%d failed=%d",
+            org_id,
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
+        )
 
     logging.info(
         "embed_documents DONE | created=%d skipped=%d failed=%d",
         total_created, total_skipped, total_failed,
     )
-    await prod_pool.close()
     await wh_pool.close()
     await vec_pool.close()
 

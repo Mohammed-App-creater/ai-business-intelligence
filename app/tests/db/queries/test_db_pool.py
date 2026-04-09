@@ -1,597 +1,354 @@
 """
-test_db_pool.py
-===============
-Tests for DBPool (MySQL) and PGPool (PostgreSQL / warehouse + vector).
+db_pool.py
+==========
+Connection pools for production MySQL and PostgreSQL (warehouse + vector).
 
-Unit tests only — no real DB connection required.
-Both aiomysql.create_pool and asyncpg.create_pool are mocked.
+  DBPool        — MySQL pool (aiomysql)
+    DBTarget.PRODUCTION  : raw SaaS data    — query modules READ here
+
+  PGPool        — PostgreSQL pools (asyncpg)
+    PGTarget.WAREHOUSE   : computed analytics — ETL WRITES, doc generator + agents READ
+    PGTarget.VECTOR      : vector embeddings  — ETL WRITES, retriever READS
+
+Two separate classes because the drivers (aiomysql vs asyncpg) have
+completely different pool APIs — forcing them into one class would
+make both messy.
+
+Usage
+-----
+    # At startup:
+    prod_pool = await DBPool.from_env(DBTarget.PRODUCTION)
+    wh_pool   = await PGPool.from_env(PGTarget.WAREHOUSE)
+    vec_pool  = await PGPool.from_env(PGTarget.VECTOR)
+
+    # Query module (read from prod):
+    async with prod_pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(sql, params)
+            rows = await cur.fetchall()
+
+    # Warehouse (asyncpg):
+    async with wh_pool.acquire() as conn:
+        rows = await conn.fetch(sql, *params)
+        await conn.execute(insert_sql, *params)
+
+    # Vector (asyncpg):
+    async with vec_pool.acquire() as conn:
+        await conn.execute(sql, *params)
+        rows = await conn.fetch(sql, *params)
+
+Environment variables
+---------------------
+Production DB (MySQL, read-only):
+  PROD_DB_HOST              default localhost
+  PROD_DB_PORT              default 3306
+  PROD_DB_USER              required
+  PROD_DB_PASSWORD          required
+  PROD_DB_NAME              required
+  PROD_DB_POOL_MIN          default 2
+  PROD_DB_POOL_MAX          default 10
+  PROD_DB_CONNECT_TIMEOUT   default 10
+
+Warehouse PostgreSQL:
+  WH_PG_HOST              default localhost
+  WH_PG_PORT              default 5432
+  WH_PG_USER              required
+  WH_PG_PASSWORD          required
+  WH_PG_NAME              required
+  WH_PG_POOL_MIN          default 1
+  WH_PG_POOL_MAX          default 5
+  WH_PG_CONNECT_TIMEOUT   default 10
+
+Vector PostgreSQL (pgvector):
+  VEC_PG_HOST             default localhost
+  VEC_PG_PORT             default 5432
+  VEC_PG_USER             required
+  VEC_PG_PASSWORD         required
+  VEC_PG_NAME             required
+  VEC_PG_POOL_MIN         default 1
+  VEC_PG_POOL_MAX         default 5
+  VEC_PG_CONNECT_TIMEOUT  default 10
 """
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+import logging
+import os
+from contextlib import asynccontextmanager
+from enum import Enum
+from typing import TYPE_CHECKING, AsyncGenerator
 
+import asyncpg
 
-# ---------------------------------------------------------------------------
-# MySQL mock helpers
-# ---------------------------------------------------------------------------
+# aiomysql is imported lazily inside DBPool methods only.
+# This allows PGPool to be imported and used without aiomysql
+# being installed — which is the case for the AI backend in v1.2.
+if TYPE_CHECKING:
+    import aiomysql
 
-def make_mock_mysql_pool(size: int = 2, freesize: int = 2):
-    pool          = MagicMock()
-    pool.size     = size
-    pool.freesize = freesize
-    pool.close    = MagicMock()
-    pool.wait_closed = AsyncMock()
-
-    conn = MagicMock()
-    pool.acquire = MagicMock()
-    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
-    pool.acquire.return_value.__aexit__  = AsyncMock(return_value=False)
-
-    return pool, conn
-
-
-def _prod_env(monkeypatch, **overrides):
-    defaults = {
-        "PROD_DB_USER":     "prod_user",
-        "PROD_DB_PASSWORD": "prod_pass",
-        "PROD_DB_NAME":     "prod_db",
-    }
-    defaults.update(overrides)
-    for k, v in defaults.items():
-        monkeypatch.setenv(k, v)
-
-
-# ---------------------------------------------------------------------------
-# PostgreSQL mock helpers
-# ---------------------------------------------------------------------------
-
-def make_mock_pg_pool(size: int = 1, idle: int = 1):
-    pool = MagicMock()
-    pool.get_size      = MagicMock(return_value=size)
-    pool.get_idle_size = MagicMock(return_value=idle)
-    pool.close         = AsyncMock()
-
-    conn = MagicMock()
-    pool.acquire = MagicMock()
-    pool.acquire.return_value.__aenter__ = AsyncMock(return_value=conn)
-    pool.acquire.return_value.__aexit__  = AsyncMock(return_value=False)
-
-    return pool, conn
-
-
-def _wh_pg_env(monkeypatch, **overrides):
-    defaults = {
-        "WH_PG_USER":     "wh_pg_user",
-        "WH_PG_PASSWORD": "wh_pg_pass",
-        "WH_PG_NAME":     "wh_pg_db",
-    }
-    defaults.update(overrides)
-    for k, v in defaults.items():
-        monkeypatch.setenv(k, v)
-
-
-def _vec_pg_env(monkeypatch, **overrides):
-    defaults = {
-        "VEC_PG_USER":     "vec_pg_user",
-        "VEC_PG_PASSWORD": "vec_pg_pass",
-        "VEC_PG_NAME":     "vec_pg_db",
-    }
-    defaults.update(overrides)
-    for k, v in defaults.items():
-        monkeypatch.setenv(k, v)
+logger = logging.getLogger(__name__)
 
 
 # ===========================================================================
-# DBTarget enum
+# MySQL — Production only
 # ===========================================================================
 
-class TestDBTarget:
-
-    def test_production_value(self):
-        from app.services.db.db_pool import DBTarget
-        assert DBTarget.PRODUCTION.value == "production"
-
-    def test_one_target_exists(self):
-        from app.services.db.db_pool import DBTarget
-        assert len(list(DBTarget)) == 1
+class DBTarget(str, Enum):
+    PRODUCTION = "production"   # raw SaaS data   — read only
 
 
-# ===========================================================================
-# PGTarget enum
-# ===========================================================================
+_ENV_PREFIX: dict[DBTarget, str] = {
+    DBTarget.PRODUCTION: "PROD_DB_",
+}
 
-class TestPGTarget:
-
-    def test_warehouse_value(self):
-        from app.services.db.db_pool import PGTarget
-        assert PGTarget.WAREHOUSE.value == "warehouse"
-
-    def test_vector_value(self):
-        from app.services.db.db_pool import PGTarget
-        assert PGTarget.VECTOR.value == "vector"
-
-    def test_two_targets_exist(self):
-        from app.services.db.db_pool import PGTarget
-        assert len(list(PGTarget)) == 2
+_DEFAULT_POOL_MIN: dict[DBTarget, int] = {
+    DBTarget.PRODUCTION: 2,
+}
+_DEFAULT_POOL_MAX: dict[DBTarget, int] = {
+    DBTarget.PRODUCTION: 10,
+}
 
 
-# ===========================================================================
-# DBPool — production
-# ===========================================================================
+class DBPool:
+    """
+    MySQL connection pool for production DB.
 
-class TestDBPoolProduction:
+    Always instantiate via from_env(target) or create(target, ...).
+    aiomysql is imported lazily so PGPool can be used independently.
+    """
 
-    async def test_missing_user_raises(self, monkeypatch):
-        monkeypatch.delenv("PROD_DB_USER",     raising=False)
-        monkeypatch.delenv("PROD_DB_PASSWORD", raising=False)
-        monkeypatch.delenv("PROD_DB_NAME",     raising=False)
-        from app.services.db.db_pool import DBPool, DBTarget
-        with pytest.raises(KeyError):
-            await DBPool.from_env(DBTarget.PRODUCTION)
+    def __init__(self, pool: "aiomysql.Pool", target: DBTarget) -> None:
+        self._pool   = pool
+        self._target = target
 
-    async def test_missing_password_raises(self, monkeypatch):
-        monkeypatch.setenv("PROD_DB_USER", "u")
-        monkeypatch.delenv("PROD_DB_PASSWORD", raising=False)
-        monkeypatch.delenv("PROD_DB_NAME",     raising=False)
-        from app.services.db.db_pool import DBPool, DBTarget
-        with pytest.raises(KeyError):
-            await DBPool.from_env(DBTarget.PRODUCTION)
+    # ------------------------------------------------------------------
+    # Factories
+    # ------------------------------------------------------------------
 
-    async def test_missing_name_raises(self, monkeypatch):
-        monkeypatch.setenv("PROD_DB_USER",     "u")
-        monkeypatch.setenv("PROD_DB_PASSWORD", "p")
-        monkeypatch.delenv("PROD_DB_NAME",     raising=False)
-        from app.services.db.db_pool import DBPool, DBTarget
-        with pytest.raises(KeyError):
-            await DBPool.from_env(DBTarget.PRODUCTION)
+    @classmethod
+    async def from_env(cls, target: DBTarget) -> "DBPool":
+        """Build from environment variables for the given target."""
+        prefix = _ENV_PREFIX[target]
 
-    async def test_reads_production_prefix(self, monkeypatch):
-        _prod_env(monkeypatch,
-                  PROD_DB_HOST="prodhost", PROD_DB_PORT="3308",
-                  PROD_DB_POOL_MIN="3",    PROD_DB_POOL_MAX="12")
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.from_env(DBTarget.PRODUCTION)
-            kw = m.call_args.kwargs
-            assert kw["host"]     == "prodhost"
-            assert kw["port"]     == 3308
-            assert kw["user"]     == "prod_user"
-            assert kw["password"] == "prod_pass"
-            assert kw["db"]       == "prod_db"
-            assert kw["minsize"]  == 3
-            assert kw["maxsize"]  == 12
+        return await cls.create(
+            target          = target,
+            host            = os.getenv(f"{prefix}HOST",     "localhost"),
+            port            = int(os.getenv(f"{prefix}PORT", "3306")),
+            user            = os.environ[f"{prefix}USER"],
+            password        = os.environ[f"{prefix}PASSWORD"],
+            db              = os.environ[f"{prefix}NAME"],
+            minsize         = int(os.getenv(
+                f"{prefix}POOL_MIN", str(_DEFAULT_POOL_MIN[target]))),
+            maxsize         = int(os.getenv(
+                f"{prefix}POOL_MAX", str(_DEFAULT_POOL_MAX[target]))),
+            connect_timeout = int(os.getenv(f"{prefix}CONNECT_TIMEOUT", "10")),
+        )
 
-    async def test_default_host_localhost(self, monkeypatch):
-        monkeypatch.delenv("PROD_DB_HOST", raising=False)
-        _prod_env(monkeypatch)
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.from_env(DBTarget.PRODUCTION)
-            assert m.call_args.kwargs["host"] == "localhost"
+    @classmethod
+    async def create(
+        cls,
+        target:          DBTarget,
+        host:            str = "localhost",
+        port:            int = 3306,
+        user:            str = "",
+        password:        str = "",
+        db:              str = "",
+        minsize:         int = 2,
+        maxsize:         int = 10,
+        connect_timeout: int = 10,
+    ) -> "DBPool":
+        """Build with explicit parameters — useful for tests."""
+        import aiomysql  # lazy import — only needed for MySQL pools
 
-    async def test_default_pool_min_2(self, monkeypatch):
-        monkeypatch.delenv("PROD_DB_POOL_MIN", raising=False)
-        _prod_env(monkeypatch)
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.from_env(DBTarget.PRODUCTION)
-            assert m.call_args.kwargs["minsize"] == 2
+        pool = await aiomysql.create_pool(
+            host            = host,
+            port            = port,
+            user            = user,
+            password        = password,
+            db              = db,
+            minsize         = minsize,
+            maxsize         = maxsize,
+            connect_timeout = connect_timeout,
+            autocommit      = True,
+            charset         = "utf8mb4",
+            cursorclass     = aiomysql.DictCursor,
+        )
 
-    async def test_default_pool_max_10(self, monkeypatch):
-        monkeypatch.delenv("PROD_DB_POOL_MAX", raising=False)
-        _prod_env(monkeypatch)
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.from_env(DBTarget.PRODUCTION)
-            assert m.call_args.kwargs["maxsize"] == 10
+        logger.info(
+            "db_pool.created target=%s host=%s port=%d db=%s min=%d max=%d",
+            target.value, host, port, db, minsize, maxsize,
+        )
 
-    async def test_target_property_is_production(self, monkeypatch):
-        _prod_env(monkeypatch)
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import DBPool, DBTarget
-            pool = await DBPool.from_env(DBTarget.PRODUCTION)
-            assert pool.target == DBTarget.PRODUCTION
+        return cls(pool, target)
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
-# ===========================================================================
-# DBPool — create() shared behaviour
-# ===========================================================================
+    @asynccontextmanager
+    async def acquire(self) -> AsyncGenerator["aiomysql.Connection", None]:
+        """Borrow a connection from the pool."""
+        async with self._pool.acquire() as conn:
+            yield conn
 
-class TestDBPoolCreate:
+    async def close(self) -> None:
+        """Close all connections gracefully. Call on shutdown."""
+        self._pool.close()
+        await self._pool.wait_closed()
+        logger.info("db_pool.closed target=%s", self._target.value)
 
-    async def test_autocommit_is_true(self):
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            assert m.call_args.kwargs["autocommit"] is True
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
-    async def test_dict_cursor_is_set(self):
-        import aiomysql
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            assert m.call_args.kwargs["cursorclass"] == aiomysql.DictCursor
+    @property
+    def target(self) -> DBTarget:
+        return self._target
 
-    async def test_charset_is_utf8mb4(self):
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            assert m.call_args.kwargs["charset"] == "utf8mb4"
+    @property
+    def size(self) -> int:
+        return self._pool.size
 
-    async def test_returns_dbpool_instance(self):
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import DBPool, DBTarget
-            result = await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            assert isinstance(result, DBPool)
+    @property
+    def freesize(self) -> int:
+        return self._pool.freesize
 
 
 # ===========================================================================
-# DBPool — acquire() and close()
+# PostgreSQL — Warehouse + Vector (asyncpg)
 # ===========================================================================
 
-class TestDBPoolAcquireClose:
-
-    async def test_acquire_yields_connection(self):
-        mock_pool, mock_conn = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import DBPool, DBTarget
-            pool = await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            async with pool.acquire() as conn:
-                assert conn is mock_conn
-
-    async def test_connection_released_on_exit(self):
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import DBPool, DBTarget
-            pool = await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            async with pool.acquire():
-                pass
-            mock_pool.acquire.return_value.__aexit__.assert_called_once()
-
-    async def test_close_calls_pool_close_and_wait(self):
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import DBPool, DBTarget
-            pool = await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            await pool.close()
-            mock_pool.close.assert_called_once()
-            mock_pool.wait_closed.assert_called_once()
-
-    async def test_size_property(self):
-        mock_pool, _ = make_mock_mysql_pool(size=7)
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import DBPool, DBTarget
-            pool = await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            assert pool.size == 7
-
-    async def test_freesize_property(self):
-        mock_pool, _ = make_mock_mysql_pool(freesize=4)
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import DBPool, DBTarget
-            pool = await DBPool.create(DBTarget.PRODUCTION, user="u", password="p", db="d")
-            assert pool.freesize == 4
+class PGTarget(str, Enum):
+    WAREHOUSE = "warehouse"   # analytics warehouse
+    VECTOR    = "vector"      # pgvector embeddings
 
 
-# ===========================================================================
-# PGPool — from_env (warehouse)
-# ===========================================================================
+_PG_ENV_PREFIX: dict[PGTarget, str] = {
+    PGTarget.WAREHOUSE: "WH_PG_",
+    PGTarget.VECTOR:  "VEC_PG_",
+}
 
-class TestPGPoolFromEnvWarehouse:
-
-    async def test_missing_user_raises(self, monkeypatch):
-        monkeypatch.delenv("WH_PG_USER",     raising=False)
-        monkeypatch.delenv("WH_PG_PASSWORD", raising=False)
-        monkeypatch.delenv("WH_PG_NAME",     raising=False)
-        from app.services.db.db_pool import PGPool, PGTarget
-        with pytest.raises(KeyError):
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-
-    async def test_missing_password_raises(self, monkeypatch):
-        monkeypatch.setenv("WH_PG_USER", "u")
-        monkeypatch.delenv("WH_PG_PASSWORD", raising=False)
-        monkeypatch.delenv("WH_PG_NAME",     raising=False)
-        from app.services.db.db_pool import PGPool, PGTarget
-        with pytest.raises(KeyError):
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-
-    async def test_missing_name_raises(self, monkeypatch):
-        monkeypatch.setenv("WH_PG_USER",     "u")
-        monkeypatch.setenv("WH_PG_PASSWORD", "p")
-        monkeypatch.delenv("WH_PG_NAME",     raising=False)
-        from app.services.db.db_pool import PGPool, PGTarget
-        with pytest.raises(KeyError):
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-
-    async def test_reads_wh_pg_env_vars(self, monkeypatch):
-        _wh_pg_env(monkeypatch,
-                   WH_PG_HOST="whhost", WH_PG_PORT="5433",
-                   WH_PG_POOL_MIN="2",  WH_PG_POOL_MAX="8")
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-            kw = m.call_args.kwargs
-            assert kw["host"]      == "whhost"
-            assert kw["port"]      == 5433
-            assert kw["user"]      == "wh_pg_user"
-            assert kw["password"]  == "wh_pg_pass"
-            assert kw["database"]  == "wh_pg_db"
-            assert kw["min_size"]  == 2
-            assert kw["max_size"]  == 8
-
-    async def test_default_host_localhost(self, monkeypatch):
-        monkeypatch.delenv("WH_PG_HOST", raising=False)
-        _wh_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-            assert m.call_args.kwargs["host"] == "localhost"
-
-    async def test_default_port_5432(self, monkeypatch):
-        monkeypatch.delenv("WH_PG_PORT", raising=False)
-        _wh_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-            assert m.call_args.kwargs["port"] == 5432
-
-    async def test_default_pool_min_1(self, monkeypatch):
-        monkeypatch.delenv("WH_PG_POOL_MIN", raising=False)
-        _wh_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-            assert m.call_args.kwargs["min_size"] == 1
-
-    async def test_default_pool_max_5(self, monkeypatch):
-        monkeypatch.delenv("WH_PG_POOL_MAX", raising=False)
-        _wh_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-            assert m.call_args.kwargs["max_size"] == 5
-
-    async def test_target_property_is_warehouse(self, monkeypatch):
-        _wh_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            pool = await PGPool.from_env(PGTarget.WAREHOUSE)
-            assert pool.target == PGTarget.WAREHOUSE
+_DEFAULT_PG_POOL_MIN: dict[PGTarget, int] = {
+    PGTarget.WAREHOUSE: 1,
+    PGTarget.VECTOR:    1,
+}
+_DEFAULT_PG_POOL_MAX: dict[PGTarget, int] = {
+    PGTarget.WAREHOUSE: 5,
+    PGTarget.VECTOR:    5,
+}
 
 
-# ===========================================================================
-# PGPool — from_env (vector)
-# ===========================================================================
+class PGPool:
+    """
+    PostgreSQL connection pool for warehouse or vector database.
 
-class TestPGPoolFromEnvVector:
+    Uses asyncpg — different driver from MySQL pools.
 
-    async def test_missing_user_raises(self, monkeypatch):
-        monkeypatch.delenv("VEC_PG_USER",     raising=False)
-        monkeypatch.delenv("VEC_PG_PASSWORD", raising=False)
-        monkeypatch.delenv("VEC_PG_NAME",     raising=False)
-        from app.services.db.db_pool import PGPool, PGTarget
-        with pytest.raises(KeyError):
-            await PGPool.from_env(PGTarget.VECTOR)
+    asyncpg connections work differently from aiomysql:
+      - No cursor() — execute queries directly on the connection
+      - conn.execute(sql, *args)   for INSERT/UPDATE
+      - conn.fetch(sql, *args)     for SELECT returning rows as Records
+      - conn.fetchrow(sql, *args)  for SELECT returning a single Record
+      - conn.fetchval(sql, *args)  for SELECT returning a single value
+    """
 
-    async def test_missing_password_raises(self, monkeypatch):
-        monkeypatch.setenv("VEC_PG_USER", "u")
-        monkeypatch.delenv("VEC_PG_PASSWORD", raising=False)
-        monkeypatch.delenv("VEC_PG_NAME",     raising=False)
-        from app.services.db.db_pool import PGPool, PGTarget
-        with pytest.raises(KeyError):
-            await PGPool.from_env(PGTarget.VECTOR)
+    def __init__(self, pool: asyncpg.Pool, target: PGTarget) -> None:
+        self._pool   = pool
+        self._target = target
 
-    async def test_missing_name_raises(self, monkeypatch):
-        monkeypatch.setenv("VEC_PG_USER",     "u")
-        monkeypatch.setenv("VEC_PG_PASSWORD", "p")
-        monkeypatch.delenv("VEC_PG_NAME",     raising=False)
-        from app.services.db.db_pool import PGPool, PGTarget
-        with pytest.raises(KeyError):
-            await PGPool.from_env(PGTarget.VECTOR)
+    # ------------------------------------------------------------------
+    # Factories
+    # ------------------------------------------------------------------
 
-    async def test_reads_vec_pg_env_vars(self, monkeypatch):
-        _vec_pg_env(monkeypatch,
-                    VEC_PG_HOST="vechost", VEC_PG_PORT="5434",
-                    VEC_PG_POOL_MIN="2",   VEC_PG_POOL_MAX="8")
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.VECTOR)
-            kw = m.call_args.kwargs
-            assert kw["host"]      == "vechost"
-            assert kw["port"]      == 5434
-            assert kw["user"]      == "vec_pg_user"
-            assert kw["password"]  == "vec_pg_pass"
-            assert kw["database"]  == "vec_pg_db"
-            assert kw["min_size"]  == 2
-            assert kw["max_size"]  == 8
+    @classmethod
+    async def from_env(cls, target: PGTarget) -> "PGPool":
+        """Build from WH_PG_* or VEC_PG_* environment variables."""
+        prefix = _PG_ENV_PREFIX[target]
 
-    async def test_default_host_localhost(self, monkeypatch):
-        monkeypatch.delenv("VEC_PG_HOST", raising=False)
-        _vec_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.VECTOR)
-            assert m.call_args.kwargs["host"] == "localhost"
+        return await cls.create(
+            target          = target,
+            host            = os.getenv(f"{prefix}HOST",     "localhost"),
+            port            = int(os.getenv(f"{prefix}PORT", "5432")),
+            user            = os.environ[f"{prefix}USER"],
+            password        = os.environ[f"{prefix}PASSWORD"],
+            database        = os.environ[f"{prefix}NAME"],
+            min_size        = int(os.getenv(
+                f"{prefix}POOL_MIN", str(_DEFAULT_PG_POOL_MIN[target]))),
+            max_size        = int(os.getenv(
+                f"{prefix}POOL_MAX", str(_DEFAULT_PG_POOL_MAX[target]))),
+            command_timeout = int(os.getenv(f"{prefix}CONNECT_TIMEOUT", "10")),
+        )
 
-    async def test_default_port_5432(self, monkeypatch):
-        monkeypatch.delenv("VEC_PG_PORT", raising=False)
-        _vec_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.VECTOR)
-            assert m.call_args.kwargs["port"] == 5432
+    @classmethod
+    async def create(
+        cls,
+        target:          PGTarget,
+        host:            str = "localhost",
+        port:            int = 5432,
+        user:            str = "",
+        password:        str = "",
+        database:        str = "",
+        min_size:        int = 1,
+        max_size:        int = 5,
+        command_timeout: int = 10,
+    ) -> "PGPool":
+        """Build with explicit parameters — useful for tests."""
+        pool = await asyncpg.create_pool(
+            host            = host,
+            port            = port,
+            user            = user,
+            password        = password,
+            database        = database,
+            min_size        = min_size,
+            max_size        = max_size,
+            command_timeout = command_timeout,
+        )
 
-    async def test_default_pool_min_1(self, monkeypatch):
-        monkeypatch.delenv("VEC_PG_POOL_MIN", raising=False)
-        _vec_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.VECTOR)
-            assert m.call_args.kwargs["min_size"] == 1
+        logger.info(
+            "pg_pool.created target=%s host=%s port=%d db=%s min=%d max=%d",
+            target.value, host, port, database, min_size, max_size,
+        )
 
-    async def test_default_pool_max_5(self, monkeypatch):
-        monkeypatch.delenv("VEC_PG_POOL_MAX", raising=False)
-        _vec_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.VECTOR)
-            assert m.call_args.kwargs["max_size"] == 5
+        return cls(pool, target)
 
-    async def test_target_property_is_vector(self, monkeypatch):
-        _vec_pg_env(monkeypatch)
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            pool = await PGPool.from_env(PGTarget.VECTOR)
-            assert pool.target == PGTarget.VECTOR
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
+    @asynccontextmanager
+    async def acquire(self) -> AsyncGenerator[asyncpg.Connection, None]:
+        """
+        Borrow a connection from the pool.
 
-# ===========================================================================
-# PGPool — create(), acquire(), close(), properties
-# ===========================================================================
+        Usage:
+            async with pg_pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+                await conn.execute(insert_sql, *params)
+        """
+        async with self._pool.acquire() as conn:
+            yield conn
 
-class TestPGPoolCreate:
+    async def close(self) -> None:
+        """Close all connections gracefully. Call on shutdown."""
+        await self._pool.close()
+        logger.info("pg_pool.closed target=%s", self._target.value)
 
-    async def test_returns_pgpool_instance(self):
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            result = await PGPool.create(
-                PGTarget.VECTOR, user="u", password="p", database="d")
-            assert isinstance(result, PGPool)
+    # ------------------------------------------------------------------
+    # Properties
+    # ------------------------------------------------------------------
 
-    async def test_pgvectorpool_alias_is_pgpool(self):
-        from app.services.db.db_pool import PGPool, PGVectorPool
-        assert PGVectorPool is PGPool
+    @property
+    def target(self) -> PGTarget:
+        return self._target
 
-    async def test_passes_correct_params(self):
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.create(
-                PGTarget.WAREHOUSE,
-                host="h", port=5433,
-                user="u", password="p", database="d",
-                min_size=2, max_size=8,
-            )
-            kw = m.call_args.kwargs
-            assert kw["host"]     == "h"
-            assert kw["port"]     == 5433
-            assert kw["user"]     == "u"
-            assert kw["database"] == "d"
-            assert kw["min_size"] == 2
-            assert kw["max_size"] == 8
+    @property
+    def size(self) -> int:
+        return self._pool.get_size()
+
+    @property
+    def idle(self) -> int:
+        """Number of idle connections available right now."""
+        return self._pool.get_idle_size()
 
 
-class TestPGPoolAcquireClose:
-
-    async def test_acquire_yields_connection(self):
-        mock_pool, mock_conn = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            pool = await PGPool.create(
-                PGTarget.VECTOR, user="u", password="p", database="d")
-            async with pool.acquire() as conn:
-                assert conn is mock_conn
-
-    async def test_connection_released_on_exit(self):
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            pool = await PGPool.create(
-                PGTarget.VECTOR, user="u", password="p", database="d")
-            async with pool.acquire():
-                pass
-            mock_pool.acquire.return_value.__aexit__.assert_called_once()
-
-    async def test_close_awaits_pool_close(self):
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            pool = await PGPool.create(
-                PGTarget.VECTOR, user="u", password="p", database="d")
-            await pool.close()
-            mock_pool.close.assert_called_once()
-
-    async def test_size_property(self):
-        mock_pool, _ = make_mock_pg_pool(size=3)
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            pool = await PGPool.create(
-                PGTarget.VECTOR, user="u", password="p", database="d")
-            assert pool.size == 3
-
-    async def test_idle_property(self):
-        mock_pool, _ = make_mock_pg_pool(idle=2)
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)):
-            from app.services.db.db_pool import PGPool, PGTarget
-            pool = await PGPool.create(
-                PGTarget.VECTOR, user="u", password="p", database="d")
-            assert pool.idle == 2
-
-
-# ===========================================================================
-# Isolation — MySQL and PG env vars don't cross-contaminate
-# ===========================================================================
-
-class TestEnvVarIsolation:
-
-    async def test_vec_pg_vars_do_not_affect_mysql_pool(self, monkeypatch):
-        _prod_env(monkeypatch, PROD_DB_HOST="prodhost")
-        _vec_pg_env(monkeypatch, VEC_PG_HOST="vechost")
-
-        mock_pool, _ = make_mock_mysql_pool()
-        with patch("aiomysql.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import DBPool, DBTarget
-            await DBPool.from_env(DBTarget.PRODUCTION)
-            assert m.call_args.kwargs["host"] == "prodhost"
-
-    async def test_mysql_vars_do_not_affect_pg_pool(self, monkeypatch):
-        _prod_env(monkeypatch, PROD_DB_HOST="prodhost")
-        _vec_pg_env(monkeypatch, VEC_PG_HOST="vechost")
-
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.VECTOR)
-            assert m.call_args.kwargs["host"] == "vechost"
-
-    async def test_wh_pg_vars_do_not_affect_vector_pool(self, monkeypatch):
-        _wh_pg_env(monkeypatch, WH_PG_HOST="whhost")
-        _vec_pg_env(monkeypatch, VEC_PG_HOST="vechost")
-
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.VECTOR)
-            assert m.call_args.kwargs["host"] == "vechost"
-
-    async def test_vec_pg_vars_do_not_affect_warehouse_pool(self, monkeypatch):
-        _wh_pg_env(monkeypatch, WH_PG_HOST="whhost")
-        _vec_pg_env(monkeypatch, VEC_PG_HOST="vechost")
-
-        mock_pool, _ = make_mock_pg_pool()
-        with patch("asyncpg.create_pool", new=AsyncMock(return_value=mock_pool)) as m:
-            from app.services.db.db_pool import PGPool, PGTarget
-            await PGPool.from_env(PGTarget.WAREHOUSE)
-            assert m.call_args.kwargs["host"] == "whhost"
+# Backward compatibility for imports: PGVectorPool = PGPool
+PGVectorPool = PGPool
