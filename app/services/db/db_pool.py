@@ -75,9 +75,11 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from enum import Enum
-from typing import AsyncGenerator
+from typing import TYPE_CHECKING, AsyncGenerator
 
-import aiomysql
+if TYPE_CHECKING:
+    import aiomysql
+
 import asyncpg
 
 logger = logging.getLogger(__name__)
@@ -151,6 +153,8 @@ class DBPool:
         connect_timeout: int = 10,
     ) -> "DBPool":
         """Build with explicit parameters — useful for tests."""
+        import aiomysql
+
         pool = await aiomysql.create_pool(
             host            = host,
             port            = port,
