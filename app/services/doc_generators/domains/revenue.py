@@ -122,19 +122,20 @@ def _chunk_staff_revenue(row: dict) -> str:
 def _chunk_location_revenue(row: dict) -> str:
     name    = row.get("location_name", "Unknown Location")
     period  = row.get("period", "unknown")
-    rev     = row.get("service_revenue", 0)
-    pct     = row.get("pct_of_total_revenue", 0)
-    visits  = row.get("visit_count", 0)
-    ticket  = row.get("avg_ticket", 0)
-    tips    = row.get("total_tips", 0)
-    disc    = row.get("total_discounts", 0)
-    gc      = row.get("gc_redemptions", 0)
+    rev     = float(row.get("service_revenue") or 0)
+    pct     = float(row.get("pct_of_total_revenue") or 0)
+    visits  = int(row.get("visit_count") or 0)
+    tkt     = float(row.get("avg_ticket") or row.get("avg_visit_value") or 0)
+    tips    = float(row.get("total_tips") or 0)
+    disc    = float(row.get("total_discounts") or 0)
+    gc      = float(row.get("gc_redemptions") or 0)
     mom     = row.get("mom_growth_pct")
     mom_str = f"Month-over-month change: {mom:+.1f}%." if mom is not None else ""
     return (
         f"Location Revenue — {name} — {period}\n"
-        f"Service revenue: ${rev:,.2f} ({pct:.1f}% of total business revenue).\n"
-        f"{visits} visits. Average ticket: ${ticket:,.2f}.\n"
+        f"Total Revenue  : ${rev:,.2f} ({pct:.1f}% of org total)\n"
+        f"{visits} visits.\n"
+        f"Avg Ticket     : ${tkt:,.2f} per visit\n"
         f"Tips: ${tips:,.2f}. Discounts: ${disc:,.2f}. Gift card redemptions: ${gc:,.2f}.\n"
         f"{mom_str}"
     ).strip()
