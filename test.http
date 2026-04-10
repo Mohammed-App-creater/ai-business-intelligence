@@ -24,7 +24,8 @@ Content-Type: application/json
 }
 
 
-# ── Mock Analytics Server (uvicorn tests.mocks.mock_analytics_server:app --port 8001) ──
+# ── Mock Analytics Server: 6 revenue + 4 appointments POST + GET /health
+#    uvicorn tests.mocks.mock_analytics_server:app --port 8001
 
 ###
 GET http://localhost:8001/health
@@ -90,6 +91,53 @@ Content-Type: application/json
 
 ###
 POST http://localhost:8001/api/v1/leo/revenue/failed-refunds
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31"
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/appointments/monthly-summary
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "group_by": "month"
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/appointments/by-staff
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "limit": 10
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/appointments/by-service
+Content-Type: application/json
+
+{
+  "business_id": 42,
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "limit": 10
+}
+
+
+###
+POST http://localhost:8001/api/v1/leo/appointments/staff-service-cross
 Content-Type: application/json
 
 {
