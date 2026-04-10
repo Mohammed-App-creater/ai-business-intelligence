@@ -94,17 +94,42 @@ async def test_get_location_revenue_summary(mock_pool, mock_conn):
     assert params[0] == SAMPLE_ORG_ID
 
 
-@pytest.mark.parametrize(
-    "fn",
-    [
-        wh_revenue.get_payment_type_breakdown,
-        wh_revenue.get_staff_revenue,
-        wh_revenue.get_location_revenue,
-        wh_revenue.get_promo_impact,
-        wh_revenue.get_failed_refunds,
-    ],
-)
 @pytest.mark.asyncio
-async def test_revenue_stub_methods_raise_not_implemented(mock_pool, fn):
-    with pytest.raises(NotImplementedError):
-        await fn(mock_pool, SAMPLE_ORG_ID, months=3)
+async def test_get_promo_impact_returns_empty(mock_pool):
+    out = await wh_revenue.get_promo_impact(mock_pool, SAMPLE_ORG_ID, months=3)
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_get_failed_refunds_returns_empty(mock_pool):
+    out = await wh_revenue.get_failed_refunds(mock_pool, SAMPLE_ORG_ID, months=3)
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_get_payment_type_breakdown_sql_and_params(mock_pool, mock_conn):
+    mock_conn.fetch = AsyncMock(return_value=[])
+    await wh_revenue.get_payment_type_breakdown(mock_pool, SAMPLE_ORG_ID, months=3)
+    sql, params = _sql_params(mock_conn.fetch.call_args)
+    assert "wh_payment_breakdown" in sql
+    assert "location_id = 0" in sql.replace("\n", " ")
+    assert params == [SAMPLE_ORG_ID, 3]
+
+
+@pytest.mark.asyncio
+async def test_get_staff_revenue_sql_and_params(mock_pool, mock_conn):
+    mock_conn.fetch = AsyncMock(return_value=[])
+    await wh_revenue.get_staff_revenue(mock_pool, SAMPLE_ORG_ID, months=5)
+    sql, params = _sql_params(mock_conn.fetch.call_args)
+    assert "wh_staff_performance" in sql
+    assert params == [SAMPLE_ORG_ID, 5]
+
+
+@pytest.mark.asyncio
+async def test_get_location_revenue_sql_and_params(mock_pool, mock_conn):
+    mock_conn.fetch = AsyncMock(return_value=[])
+    await wh_revenue.get_location_revenue(mock_pool, SAMPLE_ORG_ID, months=4)
+    sql, params = _sql_params(mock_conn.fetch.call_args)
+    assert "location_id > 0" in sql
+    assert "lag(" in sql.lower()
+    assert params == [SAMPLE_ORG_ID, 4]

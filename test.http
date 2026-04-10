@@ -12,6 +12,18 @@ Content-Type: application/json
 }
 
 
+
+###
+POST http://localhost:8000/api/v1/chat
+Content-Type: application/json
+
+{
+  "org_id": "42",
+  "business_id": "42",
+  "question": "Is my revenue trending up or down over the last 6 months?"
+}
+
+
 # ── Mock Analytics Server (uvicorn tests.mocks.mock_analytics_server:app --port 8001) ──
 
 ###

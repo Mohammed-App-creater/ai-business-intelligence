@@ -260,6 +260,8 @@ class PGPool:
         """Build from WH_PG_* or VEC_PG_* environment variables."""
         prefix = _PG_ENV_PREFIX[target]
 
+        search_path = os.getenv(f"{prefix}SCHEMA", None)
+
         return await cls.create(
             target          = target,
             host            = os.getenv(f"{prefix}HOST",     "localhost"),
@@ -272,6 +274,7 @@ class PGPool:
             max_size        = int(os.getenv(
                 f"{prefix}POOL_MAX", str(_DEFAULT_PG_POOL_MAX[target]))),
             command_timeout = int(os.getenv(f"{prefix}CONNECT_TIMEOUT", "10")),
+            search_path     = search_path,
         )
 
     @classmethod
@@ -286,8 +289,16 @@ class PGPool:
         min_size:        int = 1,
         max_size:        int = 5,
         command_timeout: int = 10,
+        search_path:     str | None = None,
     ) -> "PGPool":
         """Build with explicit parameters — useful for tests."""
+        init_connection = None
+        if search_path:
+            schema = search_path
+
+            async def init_connection(conn: asyncpg.Connection) -> None:
+                await conn.execute(f'SET search_path TO "{schema}"')
+
         pool = await asyncpg.create_pool(
             host            = host,
             port            = port,
@@ -297,6 +308,10 @@ class PGPool:
             min_size        = min_size,
             max_size        = max_size,
             command_timeout = command_timeout,
+            server_settings = (
+                {"search_path": f'"{search_path}"'} if search_path else None
+            ),
+            init              = init_connection,
         )
 
         logger.info(
