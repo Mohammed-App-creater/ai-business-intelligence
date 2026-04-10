@@ -1,10 +1,13 @@
 """
 tests/mocks/mock_analytics_server.py
 
-A lightweight FastAPI server that returns fixture data for all 6 revenue
-endpoints. Run this locally while the real Analytics Backend is under
-development — the ETL, embeddings, and chat pipeline can all be tested
-end-to-end without waiting for the backend team.
+A lightweight FastAPI server that returns fixture data for all 10 endpoints:
+  - 6 revenue endpoints
+  - 4 appointments endpoints
+
+Run this locally while the real Analytics Backend is under development —
+the ETL, embeddings, and chat pipeline can all be tested end-to-end without
+waiting for the backend team.
 
 Usage (standalone):
     uvicorn tests.mocks.mock_analytics_server:app --port 8001 --reload
@@ -19,37 +22,75 @@ Usage (in pytest — ephemeral):
     server.stop()
 """
 
-import threading
+import copy
 import socket
-from contextlib import asynccontextmanager
+import threading
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from tests.mocks.revenue_fixtures import FIXTURES
+from tests.mocks.revenue_fixtures import FIXTURES as REVENUE_FIXTURES
+from tests.mocks.appointments_fixtures import FIXTURES as APPOINTMENTS_FIXTURES
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.0.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.1.0")
+
+# Merge all fixtures into one lookup
+ALL_FIXTURES: dict[str, dict] = {
+    **REVENUE_FIXTURES,
+    **APPOINTMENTS_FIXTURES,
+}
+
+# Authorised test business IDs (simulate tenant isolation)
+AUTHORISED_BUSINESS_IDS = {42, 99, 101}
 
 
-def _response_for(path: str, business_id: int) -> dict:
+def _response_for(path: str, business_id: int) -> dict | None:
     """
     Look up the fixture for this path and patch in the business_id
     so tenant isolation checks pass in tests.
     """
-    fixture = FIXTURES.get(path)
+    fixture = ALL_FIXTURES.get(path)
     if fixture is None:
         return None
-    # Deep-copy to avoid mutating the shared fixture
-    import copy
     data = copy.deepcopy(fixture)
     data["business_id"] = business_id
     return data
 
 
-# Register all 6 revenue endpoints
+def _make_handler(captured_path: str):
+    """
+    Returns a POST handler for a single endpoint path.
+    Uses a closure to capture the path correctly across the loop.
+    """
+    async def handler(request: Request):
+        body = await request.json()
+        business_id = body.get("business_id", 0)
+
+        # Reject unknown business IDs (simulate tenant isolation)
+        if business_id not in AUTHORISED_BUSINESS_IDS:
+            return JSONResponse(
+                status_code=403,
+                content={"error": f"business_id {business_id} not authorised"},
+            )
+
+        data = _response_for(captured_path, business_id)
+        if data is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"no fixture found for {captured_path}"},
+            )
+
+        return JSONResponse(status_code=200, content=data)
+
+    # FastAPI requires unique function names per route
+    handler.__name__ = captured_path.replace("/", "_").strip("_")
+    return handler
+
+
+# ── Revenue endpoints (6) ─────────────────────────────────────────────────────
 REVENUE_PATHS = [
     "/api/v1/leo/revenue/monthly-summary",
     "/api/v1/leo/revenue/payment-types",
@@ -59,35 +100,34 @@ REVENUE_PATHS = [
     "/api/v1/leo/revenue/failed-refunds",
 ]
 
-for _path in REVENUE_PATHS:
-    # Use a closure to capture the path correctly in the loop
-    def _make_handler(captured_path: str):
-        async def handler(request: Request):
-            body = await request.json()
-            business_id = body.get("business_id", 0)
+# ── Appointments endpoints (4) ────────────────────────────────────────────────
+APPOINTMENTS_PATHS = [
+    "/api/v1/leo/appointments/monthly-summary",
+    "/api/v1/leo/appointments/by-staff",
+    "/api/v1/leo/appointments/by-service",
+    "/api/v1/leo/appointments/staff-service-cross",
+]
 
-            # Reject unknown business IDs (simulate tenant isolation)
-            if business_id not in (42, 99, 101):
-                return JSONResponse(
-                    status_code=403,
-                    content={"error": f"business_id {business_id} not authorised"},
-                )
+ALL_PATHS = REVENUE_PATHS + APPOINTMENTS_PATHS
 
-            data = _response_for(captured_path, business_id)
-            if data is None:
-                return JSONResponse(status_code=404, content={"error": "not found"})
-
-            return JSONResponse(status_code=200, content=data)
-
-        handler.__name__ = captured_path.replace("/", "_").strip("_")
-        return handler
-
+for _path in ALL_PATHS:
     app.add_api_route(_path, _make_handler(_path), methods=["POST"])
 
 
+# ── Health check ──────────────────────────────────────────────────────────────
+
 @app.get("/health")
 async def health():
-    return {"status": "ok", "mode": "mock"}
+    return {
+        "status": "ok",
+        "mode": "mock",
+        "version": "1.1.0",
+        "endpoints": {
+            "revenue":      len(REVENUE_PATHS),
+            "appointments": len(APPOINTMENTS_PATHS),
+            "total":        len(ALL_PATHS),
+        },
+    }
 
 
 # ── Programmatic server for pytest ───────────────────────────────────────────
@@ -122,7 +162,7 @@ class MockAnalyticsServer:
             app=app,
             host=self.host,
             port=self.port,
-            log_level="warning",   # quiet during tests
+            log_level="warning",  # quiet during tests
         )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
@@ -152,8 +192,15 @@ def start_mock_server() -> MockAnalyticsServer:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting LEO Mock Analytics Server on http://localhost:8001")
-    print("Available endpoints:")
+    print("Starting LEO Mock Analytics Server v1.1.0 on http://localhost:8001")
+    print()
+    print("Revenue endpoints:")
     for p in REVENUE_PATHS:
         print(f"  POST {p}")
+    print()
+    print("Appointments endpoints:")
+    for p in APPOINTMENTS_PATHS:
+        print(f"  POST {p}")
+    print()
+    print("Health: GET http://localhost:8001/health")
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)
