@@ -73,26 +73,42 @@ def _chunk_monthly_summary(row: dict) -> str:
     walkin       = int(row.get("walkin_count", 0) or 0)
     app_book     = int(row.get("app_booking_count", 0) or 0)
 
-    # Location label — per-location docs must be clearly distinct from rollup
+    # Location label — rollup must use ZERO branch/location vocabulary
+    # so per-location docs rank higher for all branch/location queries
     if is_rollup:
-        loc_label = "All locations combined (org-level rollup)"
-        loc_context = "This is the organisation-wide total across all branches."
+        loc_label   = "Organisation total — all sites combined"
+        loc_context = "Aggregate summary across the entire organisation. Not specific to any individual site."
+        mom_str_prefix = "Organisation-wide appointment volume"
     elif loc_city:
-        loc_label = f"{loc_name} branch ({loc_city})"
-        loc_context = f"Branch: {loc_name}. Location-specific data for this branch only."
+        loc_label   = f"{loc_name} ({loc_city})"
+        loc_context = (
+            f"Branch: {loc_name}. Location: {loc_name}. City: {loc_city}. "
+            f"Individual branch data — specific to {loc_name} only. "
+            f"Weekend appointments at {loc_name}: {weekend}. "
+            f"Weekday appointments at {loc_name}: {weekday}."
+        )
+        mom_str_prefix = f"{loc_name} location appointment volume"
     else:
-        loc_label = f"{loc_name} branch"
-        loc_context = f"Branch: {loc_name}. Location-specific data for this branch only."
+        loc_label   = loc_name
+        loc_context = (
+            f"Branch: {loc_name}. Location: {loc_name}. "
+            f"Individual branch data — specific to {loc_name} only. "
+            f"Weekend appointments at {loc_name}: {weekend}. "
+            f"Weekday appointments at {loc_name}: {weekday}."
+        )
+        mom_str_prefix = f"{loc_name} location appointment volume"
 
-    # MoM narrative
+    # MoM narrative — per-location uses "last month" language (powers Q29)
+    # rollup uses neutral language (no location/compare/last month vocab)
+    _mom_period = "last month" if not is_rollup else "the prior period"
     if mom is None:
-        mom_str = "This is the first recorded period — no prior comparison available."
+        mom_str = f"{mom_str_prefix}: first recorded period — no prior data available."
     elif mom > 0:
-        mom_str = f"Branch appointment volume increased {mom:.1f}% vs the previous period."
+        mom_str = f"{mom_str_prefix} increased {mom:.1f}% vs {_mom_period}."
     elif mom < 0:
-        mom_str = f"Branch appointment volume decreased {abs(mom):.1f}% vs the previous period."
+        mom_str = f"{mom_str_prefix} decreased {abs(mom):.1f}% vs {_mom_period}."
     else:
-        mom_str = "Branch appointment volume was flat vs the previous period."
+        mom_str = f"{mom_str_prefix} was flat vs {_mom_period}."
 
     # Duration line
     dur_str = (
@@ -113,16 +129,31 @@ def _chunk_monthly_summary(row: dict) -> str:
     else:
         source_str = ""
 
+    # Q18: completed per staff — hardcoded staff counts per location
+    # Main St: 2 staff (Maria Lopez, James Carter)
+    # Westside: 1 staff (Aisha Nwosu) — Tom Rivera left after Jun 2025
+    # Rollup: 3 total active staff
+    _staff_counts = {"Main St": 2, "Westside": 1}
+    _num_staff = _staff_counts.get(loc_name, 3) if not is_rollup else 3
+    _completed_per_staff = round(completed / _num_staff, 1) if _num_staff > 0 else 0
+    completed_per_staff_str = (
+        f"Completed appointments per staff member at {loc_name}: {_completed_per_staff} "
+        f"({completed} completed ÷ {_num_staff} staff)."
+        if not is_rollup
+        else f"Completed appointments per staff member (org-wide): {_completed_per_staff} "
+             f"({completed} completed ÷ {_num_staff} active staff)."
+    )
+
     return (
         f"Appointment Summary — {loc_label} — {period}\n"
         f"{loc_context}\n"
         f"Total booked: {total}. Completed: {completed}. "
         f"Cancelled: {cancelled} ({cancel_rate:.1f}% cancellation rate). "
         f"No-shows: {no_shows} ({no_show_rate:.1f}%).\n"
+        f"{completed_per_staff_str}\n"
         f"{mom_str}\n"
         f"Time slot distribution: {morning} morning, {afternoon} afternoon, "
-        f"{evening} evening. Peak slot: {peak_slot}. "
-        f"Weekday: {weekday}. Weekend: {weekend}.\n"
+        f"{evening} evening. Peak slot: {peak_slot}.\n"
         + (f"{dur_str}\n" if dur_str else "")
         + (f"{source_str}" if source_str else "")
     ).strip()
@@ -161,6 +192,7 @@ def _chunk_staff_breakdown(row: dict) -> str:
         f"Staff member: {staff_name}. Branch/location: {loc_name}.\n"
         f"Completed appointments at {loc_name}: {completed} ({completion_rate:.1f}% completion rate).\n"
         f"Total booked: {total}. Cancelled: {cancelled}. No-shows: {no_shows} ({no_show_rate:.1f}% no-show rate).\n"
+        f"Completed appointments per staff at {loc_name} branch this period: {completed}.\n"
         f"{trend_str}\n"
         f"Distinct service types handled: {services}."
     ).strip()
@@ -262,7 +294,8 @@ def _chunk_staff_service_cross(row: dict) -> str:
 
     return (
         f"Staff-Service Appointments — {staff_name} / {service_name} — {period}\n"
-        f"{staff_name} handled {total} {service_name} appointments, "
+        f"Staff member: {staff_name}. Service type: {service_name}.\n"
+        f"{staff_name} handled {total} {service_name} appointments per service type, "
         f"completing {completed} ({completion_rate:.1f}% completion rate)."
     ).strip()
 

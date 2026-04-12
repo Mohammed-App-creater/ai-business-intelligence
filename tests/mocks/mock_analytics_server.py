@@ -32,15 +32,36 @@ from fastapi.responses import JSONResponse
 
 from tests.mocks.revenue_fixtures import FIXTURES as REVENUE_FIXTURES
 from tests.mocks.appointments_fixtures import FIXTURES as APPOINTMENTS_FIXTURES
+from tests.mocks.appointments_fixtures_2026 import (
+    MONTHLY_SUMMARY_2026_ROWS,
+    STAFF_BREAKDOWN_2026_ROWS,
+    SERVICE_BREAKDOWN_2026_ROWS,
+)
+
+# ── Merge 2026 data into appointments fixtures ────────────────────────────────
+# Deep-copy to avoid mutating the imported module-level dicts
+_appt_fixtures = copy.deepcopy(APPOINTMENTS_FIXTURES)
+
+_appt_fixtures["/api/v1/leo/appointments/monthly-summary"]["data"].extend(
+    MONTHLY_SUMMARY_2026_ROWS
+)
+_appt_fixtures["/api/v1/leo/appointments/by-staff"]["data"].extend(
+    STAFF_BREAKDOWN_2026_ROWS
+)
+_appt_fixtures["/api/v1/leo/appointments/by-service"]["data"].extend(
+    SERVICE_BREAKDOWN_2026_ROWS
+)
+# Update meta to reflect 2026 best period
+_appt_fixtures["/api/v1/leo/appointments/monthly-summary"]["meta"]["best_period"] = "2026-03"
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.1.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.2.0")
 
 # Merge all fixtures into one lookup
 ALL_FIXTURES: dict[str, dict] = {
     **REVENUE_FIXTURES,
-    **APPOINTMENTS_FIXTURES,
+    **_appt_fixtures,
 }
 
 # Authorised test business IDs (simulate tenant isolation)

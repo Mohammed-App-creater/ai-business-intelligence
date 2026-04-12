@@ -82,11 +82,11 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data"],
     },
     "Q4": {
-        "text":     "How many appointments did we have this week?",
+        "text":     "How many appointments did we have this month?",
         "category": "Volume & Counts",
         "expect_numbers": True,
-        "period_keywords": ["week", "this week"],
-        "must_not_contain": ["don't have", "no data"],
+        "period_keywords": ["month", "this month"],
+        "must_not_contain": ["don't have", "no data", "unable to"],
     },
 
     # ── Trends ────────────────────────────────────────────────────────────────

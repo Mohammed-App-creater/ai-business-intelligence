@@ -373,6 +373,36 @@ class QueryAnalyzer:
     def _rule_based_check(self, question: str) -> AnalysisResult:
         q_lower = question.lower()
 
+        # Definitional "explain what … means" — not a tenant metrics lookup.
+        if re.search(r"\bexplain what .+ means?\b", q_lower):
+            return AnalysisResult(
+                route=Route.DIRECT,
+                confidence=0.90,
+                method="rules",
+                reasoning="Definitional question — not a data lookup.",
+            )
+
+        # 1a-pre. Domain data override — runs BEFORE general-advice patterns.
+        # "What is the average X" matches the DIRECT pattern BUT if X is a
+        # business metric the question is about the tenant's own data.
+        _DATA_METRIC_OVERRIDES = [
+            "service duration", "appointment duration", "session duration",
+            "average duration", "avg duration",
+            "cancel rate", "cancellation rate", "no-show rate", "no show rate",
+            "completion rate", "booking frequency", "appointment frequency",
+            "per service type", "per staff", "per employee", "per location",
+            "by service", "by staff", "by location", "by branch",
+        ]
+        if any(phrase in q_lower for phrase in _DATA_METRIC_OVERRIDES):
+            matched = [p for p in _DATA_METRIC_OVERRIDES if p in q_lower]
+            return AnalysisResult(
+                route=Route.RAG,
+                confidence=0.88,
+                method="rules",
+                matched_keywords=matched,
+                reasoning="Domain metric override — business data question before general-advice check.",
+            )
+
         # 1a. Strong DIRECT signals
         for pattern in DIRECT_PATTERNS:
             if pattern.search(question):
@@ -517,6 +547,10 @@ def get_query_analyzer(gateway=None) -> QueryAnalyzer:
 
 if __name__ == "__main__":
     TEST_CASES: list[tuple[str, Route]] = [
+        (
+            "What is the average service duration for each service type?",
+            Route.RAG,
+        ),
         ("Why did my revenue decrease this month?",               Route.RAG),
         ("Which staff member generates the most repeat clients?",  Route.RAG),
         ("What services should I add to increase profitability?",  Route.RAG),
