@@ -11,6 +11,8 @@ All endpoints are POST and require business_id + date range.
 
 import httpx
 from datetime import date
+from typing import Optional
+
 from app.core.config import settings
 import logging
  
@@ -250,11 +252,171 @@ class AnalyticsClient:
             "end_date": end_date.isoformat(),
         }
         return await self._post("/api/v1/leo/revenue/failed-refunds", payload)
- 
+
+    # ── APPOINTMENTS DOMAIN ───────────────────────────────────────────────────
+    async def get_appointments_monthly_summary(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        location_id: Optional[int] = None,
+        group_by: str = "month",
+    ) -> list[dict]:
+        """
+        Monthly appointment KPIs per location + org rollup.
+
+        Returns per-location rows (location_id > 0) AND one org-level
+        rollup row per period (location_id = 0, location_name = "__ALL__").
+
+        Powers: Q1–Q8, Q11–Q12, Q24–Q25, Q27–Q29
+
+        Key fields returned per row:
+            period, location_id, location_name, location_city,
+            total_booked, confirmed_count, completed_count,
+            cancelled_count, no_show_count,
+            morning_count, afternoon_count, evening_count,
+            weekend_count, weekday_count,
+            avg_actual_duration_min,
+            cancellation_rate_pct, no_show_rate_pct,
+            mom_growth_pct,
+            walkin_count, app_booking_count
+
+        Meta:
+            total_booked, total_completed, total_cancelled,
+            total_no_shows, avg_cancellation_rate_pct,
+            best_period, worst_period, trend_slope
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "group_by": group_by,
+        }
+        if location_id is not None:
+            payload["location_id"] = location_id
+
+        return await self._post(
+            "/api/v1/leo/appointments/monthly-summary", payload
+        )
+
+    async def get_appointments_by_staff(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        staff_id: Optional[int] = None,
+        location_id: Optional[int] = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """
+        Per-staff monthly appointment statistics.
+
+        Includes all staff with appointments in the date range,
+        even if now inactive — historical data must be preserved.
+        Do NOT filter by employee Active status.
+
+        Powers: Q10, Q13–Q18
+
+        Key fields returned per row:
+            staff_id, staff_name, location_id, location_name, period,
+            total_booked, completed_count, cancelled_count,
+            no_show_count, no_show_rate_pct,
+            distinct_services_handled, mom_growth_pct
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "limit": limit,
+        }
+        if staff_id is not None:
+            payload["staff_id"] = staff_id
+        if location_id is not None:
+            payload["location_id"] = location_id
+
+        return await self._post(
+            "/api/v1/leo/appointments/by-staff", payload
+        )
+
+    async def get_appointments_by_service(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        service_id: Optional[int] = None,
+        group_by: str = "month",
+    ) -> list[dict]:
+        """
+        Per-service monthly appointment statistics.
+
+        repeat_visit_count is a within-period proxy:
+            total_booked - distinct_clients
+        Full lifetime cohort analysis is in the Client Retention domain.
+
+        Powers: Q9, Q19–Q23, Q26
+
+        Key fields returned per row:
+            service_id, service_name, period,
+            total_booked, completed_count, cancelled_count,
+            distinct_clients, repeat_visit_count,
+            avg_scheduled_duration_min, avg_actual_duration_min,
+            cancellation_rate_pct,
+            morning_count, afternoon_count, evening_count
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "group_by": group_by,
+        }
+        if service_id is not None:
+            payload["service_id"] = service_id
+
+        return await self._post(
+            "/api/v1/leo/appointments/by-service", payload
+        )
+
+    async def get_appointments_staff_service_cross(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        staff_id: Optional[int] = None,
+        service_id: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        Staff × Service cross-dimensional breakdown.
+
+        Shows how many appointments each staff member handled per
+        service type in the period. Used to build staff specialisation
+        profiles and answer Q16.
+
+        Powers: Q16
+
+        Key fields returned per row:
+            staff_id, staff_name,
+            service_id, service_name,
+            period,
+            total_booked, completed_count
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        if staff_id is not None:
+            payload["staff_id"] = staff_id
+        if service_id is not None:
+            payload["service_id"] = service_id
+
+        return await self._post(
+            "/api/v1/leo/appointments/staff-service-cross", payload
+        )
+
     # -------------------------------------------------------------------------
     # Internal HTTP helper
     # -------------------------------------------------------------------------
- 
+
     async def _post(self, path: str, payload: dict) -> list[dict]:
         url = f"{self.base_url}{path}"
         try:

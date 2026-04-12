@@ -122,9 +122,68 @@ REVENUE_KEYWORD_GROUP: dict[str, list[str]] = {
 RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
     "financial": REVENUE_KEYWORD_GROUP["financial"],
     "appointments": [
-        "appointment", "appointments", "booking", "bookings", "schedule",
-        "cancellation", "cancellations", "cancellation rate", "no-show",
-        "no show", "rescheduled", "rebook",
+        # Core booking vocabulary (Q1–Q4)
+        "appointment", "appointments", "booking", "bookings",
+        "booked", "book", "scheduled", "schedule",
+        "how many appointments", "appointment count", "appointment volume",
+
+        # Status terms (Q2, Q24–Q26)
+        "cancellation", "cancellations", "cancellation rate", "cancel rate",
+        "cancelled", "canceled", "no-show", "no show", "no shows",
+        "no-shows", "noshows", "did not show", "missed appointment",
+        "completed appointment", "completed appointments",
+        "completion rate", "incomplete",
+
+        # Trend questions (Q5–Q8, Q9, Q10)
+        "trending", "trend", "going up", "going down",
+        "more appointments", "fewer appointments", "less bookings",
+        "more bookings", "appointment trend", "booking trend",
+        "declining appointments", "growing appointments",
+        "appointment growth", "appointment decline",
+
+        # Time slot distribution (Q11, Q12)
+        "morning appointments", "afternoon appointments", "evening appointments",
+        "morning slot", "afternoon slot", "evening slot",
+        "time slot", "time slots", "peak time", "busiest time",
+        "busy period", "quiet period", "slow period",
+        "weekend appointments", "weekday appointments",
+        "weekends", "weekend bookings", "weekend vs weekday",
+
+        # Staff appointment questions (Q13–Q18)
+        "which staff", "which employee", "who had the most appointments",
+        "who completed the most", "staff appointments", "employee appointments",
+        "most appointments", "fewest appointments", "least appointments",
+        "staff no-show", "employee no-show", "staff cancellation",
+        "staff performance", "staff decline", "declining staff",
+        "staff booking", "staff booked", "who is handling",
+        "appointments per staff", "appointments per employee",
+
+        # Service questions (Q19–Q23, Q26)
+        "which service", "most booked service", "popular service",
+        "most popular service", "service bookings", "service appointments",
+        "service duration", "how long does", "average duration",
+        "duration per service", "minutes per service", "appointment length",
+        "how long is",
+        "service cancellation", "service cancel rate",
+        "repeat clients", "repeat bookings", "returning clients",
+        "clients coming back", "most requested service",
+        "service frequency", "seasonal service", "service trend",
+
+        # Location breakdown (Q25, Q27–Q29)
+        "which branch", "which location", "location appointments",
+        "branch appointments", "location bookings", "branch bookings",
+        "busiest branch", "busiest location", "location cancellation",
+        "location cancel rate", "location comparison",
+        "compare locations", "locations this month",
+        "location volume", "branch volume",
+
+        # Walk-in vs app (Q11 related)
+        "walk-in", "walk in", "walkin", "walk-ins", "app booking",
+        "app bookings", "online booking", "online bookings",
+        "how did they book", "booking source", "booking channel",
+
+        # Rescheduling / operational
+        "rescheduled", "rescheduling", "rebook", "rebooking",
     ],
     "clients": [
         "client", "clients", "customer", "customers", "retention",
