@@ -285,3 +285,21 @@ class TestRetrieve:
         await r.retrieve("q", "t1", _analysis([]))
         call_kwargs = r._vector_store.search.call_args.kwargs
         assert call_kwargs["query_embedding"] == embedding
+
+    @pytest.mark.asyncio
+    async def test_per_location_phrase_sets_exclude_rollup_on_search(self):
+        r = _make_retriever(search_return=[])
+        await r.retrieve("Show me revenue by location", "t1", _analysis([]))
+        call_kwargs = r._vector_store.search.call_args.kwargs
+        assert call_kwargs.get("exclude_rollup") is True
+
+    @pytest.mark.asyncio
+    async def test_per_location_phrase_sets_exclude_rollup_on_multi_domain(self):
+        r = _make_retriever(multi_return=[])
+        await r.retrieve(
+            "Compare revenue and clients per location",
+            "t1",
+            _analysis(["revenue", "customer"]),
+        )
+        call_kwargs = r._vector_store.search_multi_domain.call_args.kwargs
+        assert call_kwargs.get("exclude_rollup") is True

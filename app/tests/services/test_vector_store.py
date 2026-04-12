@@ -289,12 +289,20 @@ async def test_search_with_since_date_adds_condition(store, mock_conn):
 
 
 @pytest.mark.asyncio
+async def test_search_exclude_rollup_adds_location_metadata_condition(store, mock_conn):
+    await store.search(TENANT, EMBEDDING, top_k=5, exclude_rollup=True)
+    sql = mock_conn.fetch.call_args[0][0]
+    assert "(metadata->>'location_id')::int != 0" in sql
+
+
+@pytest.mark.asyncio
 async def test_search_no_filters_no_extra_conditions(store, mock_conn):
     await store.search(TENANT, EMBEDDING, top_k=5)
     sql = mock_conn.fetch.call_args[0][0]
     assert "doc_domain = $" not in sql
     assert "doc_type = $" not in sql
     assert "period_start >=" not in sql
+    assert "(metadata->>'location_id')::int != 0" not in sql
 
 
 @pytest.mark.asyncio

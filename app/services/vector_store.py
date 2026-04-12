@@ -150,6 +150,7 @@ RETURNING id::text
         doc_domain: str | None,
         doc_type: str | None,
         since_date: date | None,
+        exclude_rollup: bool = False,
     ) -> tuple[str, list]:
         params: list = [tenant_id, self._vec(query_embedding)]
         conditions = ["tenant_id = $1"]
@@ -166,6 +167,8 @@ RETURNING id::text
             conditions.append(f"period_start >= ${idx}")
             params.append(since_date)
             idx += 1
+        if exclude_rollup:
+            conditions.append("(metadata->>'location_id')::int != 0")
         limit_idx = idx
         params.append(top_k)
         where_clause = " AND ".join(conditions)
@@ -196,6 +199,7 @@ LIMIT ${limit_idx}
         doc_domain: str | None = None,
         doc_type: str | None = None,
         since_date: date | None = None,
+        exclude_rollup: bool = False,
     ) -> list[dict]:
         sql, params = self._build_search_sql_and_params(
             tenant_id,
@@ -204,6 +208,7 @@ LIMIT ${limit_idx}
             doc_domain,
             doc_type,
             since_date,
+            exclude_rollup,
         )
         async with self._pool.acquire() as conn:
             rows = await conn.fetch(sql, *params)
@@ -216,6 +221,7 @@ LIMIT ${limit_idx}
         domains: list[str],
         top_k_per_domain: int = 3,
         since_date: date | None = None,
+        exclude_rollup: bool = False,
     ) -> list[dict]:
         merged: list[dict] = []
         for domain in domains:
@@ -225,6 +231,7 @@ LIMIT ${limit_idx}
                 top_k=top_k_per_domain,
                 doc_domain=domain,
                 since_date=since_date,
+                exclude_rollup=exclude_rollup,
             )
             merged.extend(part)
         return self._dedupe_sort_by_similarity(merged)

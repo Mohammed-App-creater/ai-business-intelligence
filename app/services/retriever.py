@@ -48,6 +48,16 @@ ALL_DOMAINS: list[str] = [
     "attendance", "subscriptions",
 ]
 
+_LOCATION_COMPARE_PHRASES: list[str] = [
+    "each location",
+    "each branch",
+    "compare to last month",
+    "location's appointment",
+    "location appointment volume",
+    "by location",
+    "per location",
+]
+
 
 # ---------------------------------------------------------------------------
 # Result dataclass
@@ -144,7 +154,11 @@ class Retriever:
 
             # 3. Search vector store with appropriate strategy
             results = await self._search(
-                tenant_id, query_embedding, domains, since_date,
+                tenant_id,
+                query_embedding,
+                domains,
+                since_date,
+                question,
             )
 
             # 4. Build context — deduplicated, ordered by similarity
@@ -228,6 +242,7 @@ class Retriever:
         query_embedding: list[float],
         domains: list[str],
         since_date: date | None,
+        question: str,
     ) -> list[dict[str, Any]]:
         """
         Execute the appropriate vector store search based on domain count.
@@ -237,6 +252,9 @@ class Retriever:
         - 2-3 domains        → search_multi_domain, top_k_per_domain = 3
         - 4+ domains         → search all, top_k = default_top_k
         """
+        q_lower = question.lower()
+        _needs_per_location = any(p in q_lower for p in _LOCATION_COMPARE_PHRASES)
+
         if len(domains) == 0 or len(domains) > 3:
             # Broad search — no domain filter
             return await self._vector_store.search(
@@ -244,6 +262,7 @@ class Retriever:
                 query_embedding=query_embedding,
                 top_k=self._default_top_k,
                 since_date=since_date,
+                exclude_rollup=_needs_per_location,
             )
 
         if len(domains) == 1:
@@ -254,6 +273,7 @@ class Retriever:
                 top_k=5,
                 doc_domain=domains[0],
                 since_date=since_date,
+                exclude_rollup=_needs_per_location,
             )
 
         # 2-3 domains — balanced multi-domain search
@@ -263,6 +283,7 @@ class Retriever:
             domains=domains,
             top_k_per_domain=3,
             since_date=since_date,
+            exclude_rollup=_needs_per_location,
         )
 
     # ------------------------------------------------------------------
