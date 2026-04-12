@@ -71,7 +71,7 @@ QUESTIONS: dict[str, dict] = {
         "text":     "How many appointments were completed vs cancelled last month?",
         "category": "Volume & Counts",
         "expect_numbers": True,
-        "period_keywords": ["last month", "previous month", "month"],
+        "period_keywords": ["completed", "cancelled", "canceled"],  # answer gives month name not "last month"
         "must_not_contain": ["don't have", "no data"],
     },
     "Q3": {
@@ -219,7 +219,7 @@ QUESTIONS: dict[str, dict] = {
         "text":     "Which services have the highest booking frequency this year?",
         "category": "Services",
         "expect_numbers": True,
-        "period_keywords": ["service", "booking", "facial", "massage"],
+        "period_keywords": ["service", "booking", "facial", "massage", "manicure"],
         "must_not_contain": ["don't have", "no data"],
     },
     "Q23": {

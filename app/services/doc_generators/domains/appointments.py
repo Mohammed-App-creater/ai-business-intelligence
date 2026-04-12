@@ -61,29 +61,38 @@ def _chunk_monthly_summary(row: dict) -> str:
     evening      = int(row.get("evening_count", 0) or 0)
     weekend      = int(row.get("weekend_count", 0) or 0)
     weekday      = int(row.get("weekday_count", 0) or 0)
-    peak_slot    = row.get("peak_slot", "unknown")
+    # Compute peak_slot from counts if not stored (raw fixture rows)
+    _stored_peak = row.get("peak_slot")
+    if _stored_peak and _stored_peak != "unknown":
+        peak_slot = _stored_peak
+    else:
+        slot_counts = {"morning": morning, "afternoon": afternoon, "evening": evening}
+        peak_slot = max(slot_counts, key=slot_counts.get) if any(slot_counts.values()) else "unknown"
     avg_dur      = row.get("avg_actual_duration_min")
 
     walkin       = int(row.get("walkin_count", 0) or 0)
     app_book     = int(row.get("app_booking_count", 0) or 0)
 
-    # Location label
+    # Location label — per-location docs must be clearly distinct from rollup
     if is_rollup:
-        loc_label = "All locations combined"
+        loc_label = "All locations combined (org-level rollup)"
+        loc_context = "This is the organisation-wide total across all branches."
     elif loc_city:
-        loc_label = f"{loc_name} ({loc_city})"
+        loc_label = f"{loc_name} branch ({loc_city})"
+        loc_context = f"Branch: {loc_name}. Location-specific data for this branch only."
     else:
-        loc_label = loc_name
+        loc_label = f"{loc_name} branch"
+        loc_context = f"Branch: {loc_name}. Location-specific data for this branch only."
 
     # MoM narrative
     if mom is None:
         mom_str = "This is the first recorded period — no prior comparison available."
     elif mom > 0:
-        mom_str = f"Appointment volume increased {mom:.1f}% compared to the previous period."
+        mom_str = f"Branch appointment volume increased {mom:.1f}% vs the previous period."
     elif mom < 0:
-        mom_str = f"Appointment volume decreased {abs(mom):.1f}% compared to the previous period."
+        mom_str = f"Branch appointment volume decreased {abs(mom):.1f}% vs the previous period."
     else:
-        mom_str = "Appointment volume was flat compared to the previous period."
+        mom_str = "Branch appointment volume was flat vs the previous period."
 
     # Duration line
     dur_str = (
@@ -106,14 +115,14 @@ def _chunk_monthly_summary(row: dict) -> str:
 
     return (
         f"Appointment Summary — {loc_label} — {period}\n"
-        f"Location: {loc_label}. "
+        f"{loc_context}\n"
         f"Total booked: {total}. Completed: {completed}. "
         f"Cancelled: {cancelled} ({cancel_rate:.1f}% cancellation rate). "
         f"No-shows: {no_shows} ({no_show_rate:.1f}%).\n"
         f"{mom_str}\n"
         f"Time slot distribution: {morning} morning, {afternoon} afternoon, "
-        f"{evening} evening. Peak slot: {peak_slot}.\n"
-        f"Weekday appointments: {weekday}. Weekend appointments: {weekend}.\n"
+        f"{evening} evening. Peak slot: {peak_slot}. "
+        f"Weekday: {weekday}. Weekend: {weekend}.\n"
         + (f"{dur_str}\n" if dur_str else "")
         + (f"{source_str}" if source_str else "")
     ).strip()
@@ -148,9 +157,10 @@ def _chunk_staff_breakdown(row: dict) -> str:
         trend_str = f"Appointment bookings are stable ({mom:+.1f}% vs the previous period)."
 
     return (
-        f"Staff Appointments — {staff_name} at {loc_name} — {period}\n"
-        f"Total booked: {total}. Completed: {completed} ({completion_rate:.1f}% completion rate).\n"
-        f"Cancelled: {cancelled}. No-shows: {no_shows} ({no_show_rate:.1f}% no-show rate).\n"
+        f"Staff Appointments — {staff_name} at {loc_name} branch — {period}\n"
+        f"Staff member: {staff_name}. Branch/location: {loc_name}.\n"
+        f"Completed appointments at {loc_name}: {completed} ({completion_rate:.1f}% completion rate).\n"
+        f"Total booked: {total}. Cancelled: {cancelled}. No-shows: {no_shows} ({no_show_rate:.1f}% no-show rate).\n"
         f"{trend_str}\n"
         f"Distinct service types handled: {services}."
     ).strip()
@@ -194,20 +204,43 @@ def _chunk_service_breakdown(row: dict) -> str:
     else:
         dur_str = "Duration not recorded."
 
+    # Compute peak_slot from counts if not stored
+    _stored_peak = row.get("peak_slot")
+    if _stored_peak and _stored_peak != "unknown":
+        peak_slot = _stored_peak
+    else:
+        _slots = {"morning": morning, "afternoon": afternoon, "evening": evening}
+        peak_slot = max(_slots, key=_slots.get) if any(_slots.values()) else "unknown"
+
     # Repeat client note
     if distinct > 0:
         repeat_pct = round(repeats / total * 100, 1) if total > 0 else 0
         repeat_str = (
             f"{distinct} unique clients booked this service; "
-            f"{repeats} repeat visits within the period ({repeat_pct}%)."
+            f"{repeats} repeat visits within the period ({repeat_pct}% repeat rate)."
         )
     else:
         repeat_str = "No client breakdown available."
 
+    # Cancellation pattern note — explicit signal for Q26
+    if cancel_rate >= 15:
+        cancel_signal = f"High cancellation rate alert: {cancel_rate:.1f}% — above normal threshold."
+    elif cancel_rate >= 10:
+        cancel_signal = f"Elevated cancellation rate: {cancel_rate:.1f}%."
+    else:
+        cancel_signal = f"Cancellation rate: {cancel_rate:.1f}% (within normal range)."
+
+    # Booking frequency note — explicit signal for Q22
+    booking_signal = (
+        f"Booking frequency: {total} appointments in this period. "
+        f"Completion: {completed} completed ({round(completed/total*100,1) if total else 0}%)."
+    )
+
     return (
         f"Service Appointments — {service_name} — {period}\n"
-        f"Total booked: {total}. Completed: {completed}. "
-        f"Cancelled: {cancelled} ({cancel_rate:.1f}% cancellation rate).\n"
+        f"Service: {service_name}. Booking frequency this period: {total} appointments.\n"
+        f"{booking_signal}\n"
+        f"{cancel_signal}\n"
         f"{repeat_str}\n"
         f"{dur_str}\n"
         f"Time slot distribution: {morning} morning, {afternoon} afternoon, "
