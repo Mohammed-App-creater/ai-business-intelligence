@@ -335,3 +335,159 @@ CREATE TABLE IF NOT EXISTS wh_etl_log (
 
 CREATE INDEX IF NOT EXISTS idx_wh_etl_log_target_started ON wh_etl_log (target_table, started_at);
 CREATE INDEX IF NOT EXISTS idx_wh_etl_log_status_started ON wh_etl_log (status, started_at);
+
+
+
+-- =============================================================================
+-- APPEND TO: warehouse_schema.sql
+-- =============================================================================
+-- Appointments domain warehouse tables.
+-- Add these after wh_appointment_metrics (the existing basic funnel table).
+-- These 4 tables replace wh_appointment_metrics for RAG purposes —
+-- they carry the full field set needed by the appointments doc generator.
+-- =============================================================================
+
+
+-- -----------------------------------------------------------------------------
+-- wh_appt_monthly_summary
+-- Monthly appointment funnel per location + org rollup (location_id = 0).
+-- Extends wh_appointment_metrics with time slots, duration, MoM, rollup flag.
+-- Source: analytics backend /api/v1/leo/appointments/monthly-summary
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wh_appt_monthly_summary (
+    id                      BIGSERIAL PRIMARY KEY,
+    business_id             INTEGER       NOT NULL,
+    location_id             INTEGER       NOT NULL DEFAULT 0,
+    location_name           VARCHAR(150)  NOT NULL DEFAULT '',
+    location_city           VARCHAR(100)  NOT NULL DEFAULT '',
+    period_start            DATE          NOT NULL,
+    period_end              DATE          NOT NULL,
+    is_rollup               BOOLEAN       NOT NULL DEFAULT FALSE,
+    total_booked            INTEGER       NOT NULL DEFAULT 0,
+    confirmed_count         INTEGER       NOT NULL DEFAULT 0,
+    completed_count         INTEGER       NOT NULL DEFAULT 0,
+    cancelled_count         INTEGER       NOT NULL DEFAULT 0,
+    no_show_count           INTEGER       NOT NULL DEFAULT 0,
+    morning_count           INTEGER       NOT NULL DEFAULT 0,
+    afternoon_count         INTEGER       NOT NULL DEFAULT 0,
+    evening_count           INTEGER       NOT NULL DEFAULT 0,
+    weekend_count           INTEGER       NOT NULL DEFAULT 0,
+    weekday_count           INTEGER       NOT NULL DEFAULT 0,
+    avg_actual_duration_min DECIMAL(6,1),
+    cancellation_rate_pct   DECIMAL(5,2)  NOT NULL DEFAULT 0,
+    no_show_rate_pct        DECIMAL(5,2)  NOT NULL DEFAULT 0,
+    mom_growth_pct          DECIMAL(6,2),
+    walkin_count            INTEGER       NOT NULL DEFAULT 0,
+    app_booking_count       INTEGER       NOT NULL DEFAULT 0,
+    peak_slot               VARCHAR(20),
+    updated_at              TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    CONSTRAINT uq_wh_appt_monthly_summary UNIQUE (business_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_appt_monthly_summary_business_id
+    ON wh_appt_monthly_summary (business_id);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_monthly_summary_business_period
+    ON wh_appt_monthly_summary (business_id, period_start);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_monthly_summary_location
+    ON wh_appt_monthly_summary (business_id, location_id, period_start);
+
+
+-- -----------------------------------------------------------------------------
+-- wh_appt_staff_breakdown
+-- Monthly appointment counts per staff member per location.
+-- Source: analytics backend /api/v1/leo/appointments/by-staff
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wh_appt_staff_breakdown (
+    id                          BIGSERIAL PRIMARY KEY,
+    business_id                 INTEGER       NOT NULL,
+    staff_id                    INTEGER       NOT NULL,
+    staff_name                  VARCHAR(150)  NOT NULL DEFAULT '',
+    location_id                 INTEGER       NOT NULL DEFAULT 0,
+    location_name               VARCHAR(150)  NOT NULL DEFAULT '',
+    period_start                DATE          NOT NULL,
+    period_end                  DATE          NOT NULL,
+    total_booked                INTEGER       NOT NULL DEFAULT 0,
+    completed_count             INTEGER       NOT NULL DEFAULT 0,
+    completion_rate_pct         DECIMAL(5,2)  NOT NULL DEFAULT 0,
+    cancelled_count             INTEGER       NOT NULL DEFAULT 0,
+    no_show_count               INTEGER       NOT NULL DEFAULT 0,
+    no_show_rate_pct            DECIMAL(5,2)  NOT NULL DEFAULT 0,
+    distinct_services_handled   INTEGER       NOT NULL DEFAULT 0,
+    mom_growth_pct              DECIMAL(6,2),
+    updated_at                  TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    CONSTRAINT uq_wh_appt_staff_breakdown UNIQUE (business_id, staff_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_breakdown_business_id
+    ON wh_appt_staff_breakdown (business_id);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_breakdown_business_period
+    ON wh_appt_staff_breakdown (business_id, period_start);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_breakdown_staff
+    ON wh_appt_staff_breakdown (business_id, staff_id);
+
+
+-- -----------------------------------------------------------------------------
+-- wh_appt_service_breakdown
+-- Monthly appointment counts per service type.
+-- Source: analytics backend /api/v1/leo/appointments/by-service
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wh_appt_service_breakdown (
+    id                          BIGSERIAL PRIMARY KEY,
+    business_id                 INTEGER       NOT NULL,
+    service_id                  INTEGER       NOT NULL,
+    service_name                VARCHAR(200)  NOT NULL DEFAULT '',
+    period_start                DATE          NOT NULL,
+    period_end                  DATE          NOT NULL,
+    total_booked                INTEGER       NOT NULL DEFAULT 0,
+    completed_count             INTEGER       NOT NULL DEFAULT 0,
+    cancelled_count             INTEGER       NOT NULL DEFAULT 0,
+    distinct_clients            INTEGER       NOT NULL DEFAULT 0,
+    repeat_visit_count          INTEGER       NOT NULL DEFAULT 0,
+    avg_scheduled_duration_min  DECIMAL(6,1),
+    avg_actual_duration_min     DECIMAL(6,1),
+    cancellation_rate_pct       DECIMAL(5,2)  NOT NULL DEFAULT 0,
+    morning_count               INTEGER       NOT NULL DEFAULT 0,
+    afternoon_count             INTEGER       NOT NULL DEFAULT 0,
+    evening_count               INTEGER       NOT NULL DEFAULT 0,
+    peak_slot                   VARCHAR(20),
+    updated_at                  TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    CONSTRAINT uq_wh_appt_service_breakdown UNIQUE (business_id, service_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_appt_service_breakdown_business_id
+    ON wh_appt_service_breakdown (business_id);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_service_breakdown_business_period
+    ON wh_appt_service_breakdown (business_id, period_start);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_service_breakdown_service
+    ON wh_appt_service_breakdown (business_id, service_id);
+
+
+-- -----------------------------------------------------------------------------
+-- wh_appt_staff_service_cross
+-- Monthly appointment counts per staff member per service type.
+-- Source: analytics backend /api/v1/leo/appointments/staff-service-cross
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wh_appt_staff_service_cross (
+    id                  BIGSERIAL PRIMARY KEY,
+    business_id         INTEGER       NOT NULL,
+    staff_id            INTEGER       NOT NULL,
+    staff_name          VARCHAR(150)  NOT NULL DEFAULT '',
+    service_id          INTEGER       NOT NULL,
+    service_name        VARCHAR(200)  NOT NULL DEFAULT '',
+    period_start        DATE          NOT NULL,
+    period_end          DATE          NOT NULL,
+    total_booked        INTEGER       NOT NULL DEFAULT 0,
+    completed_count     INTEGER       NOT NULL DEFAULT 0,
+    completion_rate_pct DECIMAL(5,2)  NOT NULL DEFAULT 0,
+    updated_at          TIMESTAMPTZ   NOT NULL DEFAULT now(),
+    CONSTRAINT uq_wh_appt_staff_service_cross UNIQUE (business_id, staff_id, service_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_service_cross_business_id
+    ON wh_appt_staff_service_cross (business_id);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_service_cross_business_period
+    ON wh_appt_staff_service_cross (business_id, period_start);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_service_cross_staff
+    ON wh_appt_staff_service_cross (business_id, staff_id);
+CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_service_cross_service
+    ON wh_appt_staff_service_cross (business_id, service_id);
