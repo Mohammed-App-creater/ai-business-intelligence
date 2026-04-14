@@ -191,9 +191,32 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "acquisition", "lost client", "inactive",
     ],
     "staff": [
+        # Core staff vocabulary
         "staff", "employee", "employees", "team", "stylist", "therapist",
         "technician", "performance", "utilisation", "utilization",
         "rating", "reviews", "rating score",
+
+        # Vocabulary variants (Q25-Q32 test cases)
+        "worker", "workers",
+        "mvp",
+        "slacking", "slacked",
+        "underperforming", "underperformer",
+
+        # Attendance / hours (Q33)
+        "hours", "clocked", "hours worked", "hours clocked",
+        "clock in", "clock out", "attendance hours", "working hours",
+
+        # Commission (Q34, Q36, Q37 — improves domain targeting to staff+revenue)
+        "commission", "commission earned", "commission rate",
+
+        # Active / inactive status (Q5, Q21)
+        "active staff", "inactive staff", "deactivated",
+
+        # Hire / tenure (Q22)
+        "joined", "hire date", "new hire",
+
+        # Cross-domain root cause (Q38)
+        "staffing", "staffing issue",
     ],
     "services": [
         "service", "services", "treatment", "treatments", "menu",
@@ -238,6 +261,8 @@ DIRECT_PATTERNS: list[re.Pattern[str]] = [
 MY_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bmy (revenue|profit|clients?|staff|appointments?|bookings?|services?|business|salon|spa|shop|team|cancellations?|performance|data|report|metrics?|kpi)\b", re.I),
     re.compile(r"\b(our|we|i have|i've|i'm)\b", re.I),
+    # Fuzzy possessive + location noun — catches "my downtown location", "my Main St branch"
+    re.compile(r"\bmy\b.{0,20}\b(location|locations|branch|branches|site|sites)\b", re.I),
 ]
 
 # NOTE: CLASSIFIER_SYSTEM_PROMPT removed — the prompt now lives in
