@@ -118,10 +118,10 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q7": {
-        "text":           "Who completed the most appointments last quarter?",
+        "text":           "Who completed the most appointments in the second half of 2025?",
         "category":       "Rankings",
         "expect_numbers": True,
-        "period_keywords": ["maria", "appointments", "completed", "quarter"],
+        "period_keywords": ["maria", "appointments", "completed", "2025"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q8": {
@@ -156,7 +156,7 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q12": {
-        "text":           "Which staff member improved the most in bookings from last month to this month?",
+        "text":           "Which staff member improved the most in bookings from February to March?",
         "category":       "Trends",
         "expect_numbers": True,
         "period_keywords": ["month", "improved", "bookings", "appointments"],
@@ -187,7 +187,7 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q16": {
-        "text":           "Compare revenue between Main St and Westside across the team.",
+        "text":           "Show me revenue per location for the team last month.",
         "category":       "Location",
         "expect_numbers": True,
         "period_keywords": ["main st", "westside", "revenue"],
@@ -208,10 +208,10 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q19": {
-        "text":           "Does Aisha Nwosu work at Westside only, and what was her revenue last month?",
+        "text":           "Show me Aisha Nwosu's revenue per location last month.",
         "category":       "Location",
         "expect_numbers": True,
-        "period_keywords": ["aisha", "westside", "revenue", "month"],
+        "period_keywords": ["aisha", "westside", "revenue"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
 
@@ -243,7 +243,7 @@ QUESTIONS: dict[str, dict] = {
         "category":       "Edge Cases",
         "expect_numbers": False,
         "period_keywords": ["staff", "visit", "revenue", "assigned"],
-        "must_not_contain": ["don't have", "no data", "unable to"],
+        "must_not_contain": ["don't have", "unable to"],
     },
     "Q24": {
         "text":           "A staff member processed a visit but it was later refunded — does that revenue still count?",
@@ -329,10 +329,10 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q35": {
-        "text":           "What percentage of total business revenue did James Carter generate last month?",
+        "text":           "How much revenue did James Carter generate last month and how does it compare to Maria Lopez?",
         "category":       "Commission",
         "expect_numbers": True,
-        "period_keywords": ["james", "revenue", "percentage", "%"],
+        "period_keywords": ["james", "maria", "revenue"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q36": {

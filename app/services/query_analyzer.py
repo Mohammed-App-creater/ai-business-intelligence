@@ -417,6 +417,11 @@ class QueryAnalyzer:
             "completion rate", "booking frequency", "appointment frequency",
             "per service type", "per staff", "per employee", "per location",
             "by service", "by staff", "by location", "by branch",
+            # Staff multi-person queries — force single-domain staff search (top_k=12)
+            # without these, "all staff members" hits both staff+financial groups
+            # → multi-domain search → top_k_per_domain=3 → thin context → no answer
+            "all staff members", "each staff member", "per staff member",
+            "staff member's revenue", "staff working at",
         ]
         if any(phrase in q_lower for phrase in _DATA_METRIC_OVERRIDES):
             matched = [p for p in _DATA_METRIC_OVERRIDES if p in q_lower]
