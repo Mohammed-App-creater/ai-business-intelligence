@@ -329,10 +329,10 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q35": {
-        "text":           "How much revenue did James Carter generate last month and how does it compare to Maria Lopez?",
+        "text":           "Show me each staff member's revenue last month.",
         "category":       "Commission",
         "expect_numbers": True,
-        "period_keywords": ["james", "maria", "revenue"],
+        "period_keywords": ["james", "maria", "aisha", "revenue"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q36": {
