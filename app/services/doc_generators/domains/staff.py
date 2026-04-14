@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import date
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -342,12 +343,23 @@ async def generate_staff_docs(
 
             embedding = await embedding_client.embed(chunk_text)
 
+            # Parse period_label → date so the vector store can filter by period.
+            # staff_summary rows have no period_label → period_start stays None.
+            period_label = row.get("period_label") or ""
+            period_start: date | None = None
+            if len(period_label) == 7:  # "YYYY-MM"
+                try:
+                    y, m = int(period_label[:4]), int(period_label[5:7])
+                    period_start = date(y, m, 1)
+                except (ValueError, IndexError):
+                    pass
+
             metadata = {
                 "org_id":      org_id,
                 "doc_type":    doc_type,
                 "domain":      DOMAIN,
                 "staff_id":    row.get("staff_id"),
-                "period":      row.get("period_label"),
+                "period":      period_label or None,
                 "location_id": row.get("location_id"),
                 "is_active":   row.get("is_active"),
             }
@@ -359,6 +371,7 @@ async def generate_staff_docs(
                 doc_type=doc_type,
                 chunk_text=chunk_text,
                 embedding=embedding,
+                period_start=period_start,
                 metadata=metadata,
             )
 

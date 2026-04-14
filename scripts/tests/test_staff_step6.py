@@ -68,40 +68,43 @@ REQUEST_TIMEOUT = 30.0
 QUESTIONS: dict[str, dict] = {
 
     # ══ Category 1 — Basic Lookups ════════════════════════════════════════════
+    # NOTE: Using actual fixture staff names (Maria Lopez, James Carter,
+    # Aisha Nwosu, Tom Rivera). Fixture data covers Jan 2025 – Mar 2026.
+    # "Last month" = March 2026 (current date April 2026).
 
     "Q1": {
-        "text":           "How many appointments did Sarah complete last month?",
+        "text":           "How many appointments did Maria Lopez complete last month?",
         "category":       "Basic Lookups",
         "expect_numbers": True,
-        "period_keywords": ["sarah", "completed", "appointments", "month"],
+        "period_keywords": ["maria", "completed", "appointments", "month"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q2": {
-        "text":           "How much revenue did Marcus generate in Q1?",
+        "text":           "How much revenue did James Carter generate in Q1?",
         "category":       "Basic Lookups",
         "expect_numbers": True,
-        "period_keywords": ["marcus", "revenue", "quarter", "q1"],
+        "period_keywords": ["james", "revenue", "quarter", "q1"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q3": {
-        "text":           "What is Emma's average customer rating?",
+        "text":           "What is Maria Lopez's average customer rating?",
         "category":       "Basic Lookups",
         "expect_numbers": True,
-        "period_keywords": ["emma", "rating", "average"],
+        "period_keywords": ["maria", "rating", "average"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q4": {
-        "text":           "Show me all staff members and their total revenue this month.",
+        "text":           "Show me all staff members and their total revenue last month.",
         "category":       "Basic Lookups",
         "expect_numbers": True,
         "period_keywords": ["staff", "revenue", "month", "maria", "james", "aisha"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q5": {
-        "text":           "Is Jake currently active on the team?",
+        "text":           "Show me Tom Rivera's performance history and when he was last active.",
         "category":       "Basic Lookups",
-        "expect_numbers": False,
-        "period_keywords": ["jake", "active", "team"],
+        "expect_numbers": True,
+        "period_keywords": ["tom", "rivera", "revenue", "active"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
 
@@ -146,10 +149,10 @@ QUESTIONS: dict[str, dict] = {
     # ══ Category 3 — Trends ═══════════════════════════════════════════════════
 
     "Q11": {
-        "text":           "Has Sarah's revenue been increasing or decreasing over the last 3 months?",
+        "text":           "Has Maria Lopez's revenue been increasing or decreasing over the last 3 months?",
         "category":       "Trends",
         "expect_numbers": True,
-        "period_keywords": ["sarah", "revenue", "month", "increasing", "growing"],
+        "period_keywords": ["maria", "revenue", "month", "increasing", "growing"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q12": {
@@ -160,14 +163,14 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q13": {
-        "text":           "Show me Marcus's performance month by month for the past 6 months.",
+        "text":           "Show me James Carter's performance month by month for the past 6 months.",
         "category":       "Trends",
         "expect_numbers": True,
-        "period_keywords": ["marcus", "month", "revenue", "performance"],
+        "period_keywords": ["james", "month", "revenue", "performance"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q14": {
-        "text":           "Did any staff member's revenue drop significantly this month compared to last?",
+        "text":           "Did any staff member's revenue drop significantly last month compared to the month before?",
         "category":       "Trends",
         "expect_numbers": True,
         "period_keywords": ["revenue", "month", "drop", "decline"],
@@ -177,21 +180,21 @@ QUESTIONS: dict[str, dict] = {
     # ══ Category 4 — Location Breakdown ══════════════════════════════════════
 
     "Q15": {
-        "text":           "Who is the top performer at my downtown location?",
+        "text":           "Who is the top performer at my Main St location?",
         "category":       "Location",
         "expect_numbers": True,
-        "period_keywords": ["location", "revenue", "performer", "top"],
+        "period_keywords": ["main st", "revenue", "performer", "top"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q16": {
-        "text":           "How does staff performance compare between my two locations?",
+        "text":           "Compare revenue between Main St and Westside across the team.",
         "category":       "Location",
         "expect_numbers": True,
-        "period_keywords": ["main st", "westside", "location", "revenue"],
+        "period_keywords": ["main st", "westside", "revenue"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q17": {
-        "text":           "Show me all staff working at the Main Street branch and their revenue this month.",
+        "text":           "Show me all staff working at the Main St branch and their revenue last month.",
         "category":       "Location",
         "expect_numbers": True,
         "period_keywords": ["main st", "maria", "james", "revenue", "month"],
@@ -205,10 +208,10 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q19": {
-        "text":           "Does Sarah work across multiple locations, and if so, how does her revenue split?",
+        "text":           "Does Aisha Nwosu work at Westside only, and what was her revenue last month?",
         "category":       "Location",
         "expect_numbers": True,
-        "period_keywords": ["sarah", "location", "revenue", "main st"],
+        "period_keywords": ["aisha", "westside", "revenue", "month"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
 
@@ -319,17 +322,17 @@ QUESTIONS: dict[str, dict] = {
     # ══ Category 7 — Commission & Pay ═════════════════════════════════════════
 
     "Q34": {
-        "text":           "How much commission did the team earn in total last month?",
+        "text":           "How much commission did each staff member earn last month?",
         "category":       "Commission",
         "expect_numbers": True,
-        "period_keywords": ["commission", "team", "last month", "month"],
+        "period_keywords": ["commission", "staff", "last month", "month"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q35": {
-        "text":           "What percentage of total business revenue did Marcus generate this quarter?",
+        "text":           "What percentage of total business revenue did James Carter generate last month?",
         "category":       "Commission",
         "expect_numbers": True,
-        "period_keywords": ["marcus", "revenue", "percentage", "%"],
+        "period_keywords": ["james", "revenue", "percentage", "%"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q36": {
@@ -340,7 +343,7 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q37": {
-        "text":           "Show me commission earned per staff member this month.",
+        "text":           "Show me commission earned per staff member last month.",
         "category":       "Commission",
         "expect_numbers": True,
         "period_keywords": ["commission", "staff", "month", "maria"],
