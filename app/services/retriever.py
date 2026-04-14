@@ -266,11 +266,14 @@ class Retriever:
             )
 
         if len(domains) == 1:
-            # Deep single-domain search
+            # Deep single-domain search.
+            # Staff domain needs more results — it has 61 docs across 3 types
+            # and multi-staff questions need all active staff represented.
+            _top_k = 12 if domains[0] == "staff" else 5
             return await self._vector_store.search(
                 tenant_id=tenant_id,
                 query_embedding=query_embedding,
-                top_k=5,
+                top_k=_top_k,
                 doc_domain=domains[0],
                 since_date=since_date,
                 exclude_rollup=_needs_per_location,
