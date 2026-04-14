@@ -32,6 +32,7 @@ from app.prompts.types import RagChatData
 from app.services.llm.types import UseCase
 from app.services.query_analyzer import Route
 from app.services.retriever import RetrievalContext
+from app.services.time_parser import parse_since_date
 
 logger = logging.getLogger(__name__)
 
@@ -205,14 +206,18 @@ class ChatService:
     ) -> ChatResponse:
         """Handle a RAG-routed question (needs business data)."""
 
-        # 1. Retrieve context from vector store
+        # 1. Parse time reference from question for pre-filter
+        since_date = parse_since_date(request.question)
+
+        # 2. Retrieve context from vector store
         ctx: RetrievalContext = await self._retriever.retrieve(
             question=request.question,
             tenant_id=request.business_id,
             analysis=analysis,
+            since_date=since_date,
         )
 
-        # 2. Build RagChatData with retrieved documents
+        # 3. Build RagChatData with retrieved documents
         rag_data = RagChatData(
             business_id=request.business_id,
             business_type=self._business_type,
@@ -221,7 +226,7 @@ class ChatService:
             documents=ctx.documents,
         )
 
-        # 3. Call LLM with structured data
+        # 4. Call LLM with structured data
         response = await self._gateway.call_with_data(
             UseCase.RAG_CHAT,
             rag_data,
@@ -230,13 +235,13 @@ class ChatService:
 
         latency = (time.perf_counter() - t0) * 1000
 
-        # 4. Extract answer from LLM response
+        # 5. Extract answer from LLM response
         answer = self._extract_answer(response)
 
         logger.info(
             "chat_service.rag business_id=%s confidence=%.2f "
-            "docs=%d sources=%s latency_ms=%.1f",
-            request.business_id, analysis.confidence,
+            "since_date=%s docs=%d sources=%s latency_ms=%.1f",
+            request.business_id, analysis.confidence, since_date,
             ctx.total_results, ctx.doc_ids, latency,
         )
 
