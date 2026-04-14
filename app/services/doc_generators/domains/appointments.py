@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from datetime import date
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -410,6 +411,16 @@ async def generate_appointments_docs(
                 "service_id":  row.get("service_id"),
             }
 
+            # Parse period → date so the vector store can filter by period_start.
+            period_str = row.get("period") or ""
+            period_start: date | None = None
+            if len(period_str) == 7:  # "YYYY-MM"
+                try:
+                    y, m = int(period_str[:4]), int(period_str[5:7])
+                    period_start = date(y, m, 1)
+                except (ValueError, IndexError):
+                    pass
+
             # Upsert into pgvector
             await vector_store.upsert(
                 doc_id=doc_id,
@@ -418,6 +429,7 @@ async def generate_appointments_docs(
                 doc_type=doc_type,
                 chunk_text=chunk_text,
                 embedding=embedding,
+                period_start=period_start,
                 metadata=metadata,
             )
 
