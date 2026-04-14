@@ -23,6 +23,8 @@ from app.services.vector_store import VectorStore
 from etl.transforms.revenue_etl import RevenueExtractor
 from app.services.doc_generators.domains.appointments import generate_appointments_docs
 from etl.transforms.appointments_etl import AppointmentsExtractor
+from app.services.doc_generators.domains.staff import generate_staff_docs
+from etl.transforms.staff_etl import StaffExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
@@ -608,6 +610,23 @@ class DocGenerator:
         extractor = AppointmentsExtractor(client=client, wh_pool=self._wh._pool)
         return await extractor.run(org_id, start_date, end_date)
 
+    async def _fetch_staff_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> list[dict]:
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return []
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = StaffExtractor(client=client, wh_pool=self._wh._pool)
+        return await extractor.run(org_id, start_date, end_date)
+
     async def generate_all(
         self,
         org_id:       int,
@@ -978,59 +997,17 @@ class DocGenerator:
     async def _gen_staff(
         self, org_id: int, period_start: date | None, months: int, force: bool
     ) -> tuple[int, int, int]:
-        created = skipped = failed = 0
-        periods = self._month_periods(period_start, months)
-        tenant = str(org_id)
-        for ps in periods:
-            pl = self._period_label(ps)
-            monthly = await self._wh.staff.get_staff_monthly_performance(org_id, ps)
-            if monthly:
-                kpi_m = self._kpi_staff_monthly(monthly, pl)
-                doc_id = f"{org_id}_staff_monthly_{self._doc_month_suffix(ps)}"
-                data = DocGenData(
-                    business_id=str(org_id),
-                    business_type=self._biz_type,
-                    period=pl,
-                    doc_domain="staff",
-                    doc_type="monthly_summary",
-                    kpi_block=kpi_m,
-                )
-                chunk = await self._make_chunk_text(org_id, data)
-                st = await self._store_doc(
-                    tenant, doc_id, "staff", "monthly_summary", chunk, ps, {}, force
-                )
-                if st == "created":
-                    created += 1
-                elif st == "skipped":
-                    skipped += 1
-                else:
-                    failed += 1
-            for row in monthly:
-                eid = int(row.get("employee_id") or 0)
-                name = str(row.get("employee_name") or "")
-                trend = await self._wh.staff.get_staff_trend(org_id, eid, months=24)
-                kpi_i = self._kpi_staff_individual_for_month(trend, name, ps, pl)
-                doc_i = f"{org_id}_staff_{eid}_{self._doc_month_suffix(ps)}"
-                data_i = DocGenData(
-                    business_id=str(org_id),
-                    business_type=self._biz_type,
-                    period=pl,
-                    doc_domain="staff",
-                    doc_type="individual",
-                    kpi_block=kpi_i,
-                    entity_name=name,
-                )
-                chunk_i = await self._make_chunk_text(org_id, data_i)
-                st_i = await self._store_doc(
-                    tenant, doc_i, "staff", "individual", chunk_i, ps, {}, force
-                )
-                if st_i == "created":
-                    created += 1
-                elif st_i == "skipped":
-                    skipped += 1
-                else:
-                    failed += 1
-        return created, skipped, failed
+        warehouse_rows = await self._fetch_staff_warehouse_rows(
+            org_id, period_start, months
+        )
+        result = await generate_staff_docs(
+            org_id, warehouse_rows, self._emb, self._vs, force
+        )
+        return (
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
+        )
 
     async def _gen_services(
         self, org_id: int, period_start: date | None, months: int, force: bool
