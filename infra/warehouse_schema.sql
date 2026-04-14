@@ -491,3 +491,219 @@ CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_service_cross_staff
     ON wh_appt_staff_service_cross (business_id, staff_id);
 CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_service_cross_service
     ON wh_appt_staff_service_cross (business_id, service_id);
+
+
+
+
+-- =============================================================================
+-- APPEND TO: warehouse_schema.sql
+-- =============================================================================
+-- Staff Performance domain warehouse tables.
+-- Add these after the existing wh_staff_performance table.
+--
+-- WHY NEW TABLES INSTEAD OF ALTERING wh_staff_performance:
+--   wh_staff_performance has UNIQUE(business_id, employee_id, period_start).
+--   Our Q1 grain is per (staff × location × period) — a staff member working
+--   at two locations in the same month needs two rows. That would violate the
+--   existing constraint. Same pattern as wh_appointment_metrics → wh_appt_*:
+--   leave the existing table for backwards compat, add new tables alongside.
+--
+-- NEW TABLES:
+--   wh_staff_performance_monthly  — Q1: KPIs per staff × location × period
+--   wh_staff_summary              — Q2: all-time totals per staff
+--   wh_staff_attendance           — Q4: hours worked per staff × location × period
+-- =============================================================================
+
+
+-- -----------------------------------------------------------------------------
+-- wh_staff_performance_monthly
+-- Monthly staff KPIs: revenue, visits, commission, ratings, cancellations.
+-- Grain: one row per (business_id, employee_id, location_id, period_start).
+-- Source: analytics backend POST /api/v1/leo/staff-performance (mode=monthly)
+-- Covers test questions: Q1–Q8, Q11–Q22, Q25–Q32, Q34–Q35, Q37–Q39
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wh_staff_performance_monthly (
+    id                          BIGSERIAL PRIMARY KEY,
+    business_id                 INTEGER         NOT NULL,
+
+    -- Staff identifiers
+    employee_id                 INTEGER         NOT NULL,
+    employee_name               VARCHAR(150)    NOT NULL DEFAULT '',
+    employee_first_name         VARCHAR(75)     NOT NULL DEFAULT '',
+    employee_last_name          VARCHAR(75)     NOT NULL DEFAULT '',
+    is_active                   BOOLEAN         NOT NULL DEFAULT TRUE,
+    hire_date                   DATE,
+
+    -- Location (where visits occurred — not staff home location)
+    location_id                 INTEGER         NOT NULL DEFAULT 0,
+    location_name               VARCHAR(150)    NOT NULL DEFAULT '',
+
+    -- Period
+    period_start                DATE            NOT NULL,
+    period_end                  DATE            NOT NULL,
+
+    -- Visit metrics (PaymentStatus = 1 — successful only)
+    completed_visit_count       INTEGER         NOT NULL DEFAULT 0,
+    unique_customer_count       INTEGER         NOT NULL DEFAULT 0,
+
+    -- Revenue metrics
+    revenue                     DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+    tips                        DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+    total_pay                   DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+    avg_revenue_per_visit       DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+    commission_earned           DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+
+    -- Cancelled / refunded payment counts (from tbl_visit PaymentStatus)
+    -- Note: these are payment-level cancellations, not appointment-level.
+    -- Appointment-level no-shows live in wh_appt_staff_breakdown.
+    cancelled_payment_count     INTEGER         NOT NULL DEFAULT 0,
+    refunded_payment_count      INTEGER         NOT NULL DEFAULT 0,
+    revoked_payment_count       INTEGER         NOT NULL DEFAULT 0,
+
+    -- Rating metrics (from tbl_emp_reviews — staff-specific reviews only)
+    -- avg_rating is NULL when review_count = 0 (not 0 — avoids misleading "zero" rating)
+    review_count                INTEGER         NOT NULL DEFAULT 0,
+    avg_rating                  DECIMAL(3, 2),
+
+    updated_at                  TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_wh_staff_performance_monthly
+        UNIQUE (business_id, employee_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_staff_perf_monthly_business
+    ON wh_staff_performance_monthly (business_id);
+CREATE INDEX IF NOT EXISTS idx_wh_staff_perf_monthly_business_period
+    ON wh_staff_performance_monthly (business_id, period_start);
+CREATE INDEX IF NOT EXISTS idx_wh_staff_perf_monthly_employee
+    ON wh_staff_performance_monthly (business_id, employee_id);
+CREATE INDEX IF NOT EXISTS idx_wh_staff_perf_monthly_location
+    ON wh_staff_performance_monthly (business_id, location_id, period_start);
+-- Active staff filter (common query: WHERE is_active = TRUE)
+CREATE INDEX IF NOT EXISTS idx_wh_staff_perf_monthly_active
+    ON wh_staff_performance_monthly (business_id, is_active, period_start);
+
+
+-- -----------------------------------------------------------------------------
+-- wh_staff_summary
+-- All-time / YTD aggregated staff KPIs — one row per staff member.
+-- Grain: one row per (business_id, employee_id).
+-- Source: analytics backend POST /api/v1/leo/staff-performance (mode=summary)
+-- Covers test questions: Q9 (rank by revenue), Q10 (lowest rating), Q29, Q31
+--
+-- Updated on every ETL run (ON CONFLICT DO UPDATE replaces the row).
+-- The period_from / period_to columns document what date range was aggregated.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wh_staff_summary (
+    id                              BIGSERIAL PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+
+    -- Staff identifiers
+    employee_id                     INTEGER         NOT NULL,
+    employee_name                   VARCHAR(150)    NOT NULL DEFAULT '',
+    employee_first_name             VARCHAR(75)     NOT NULL DEFAULT '',
+    employee_last_name              VARCHAR(75)     NOT NULL DEFAULT '',
+    is_active                       BOOLEAN         NOT NULL DEFAULT TRUE,
+    hire_date                       DATE,
+
+    -- Aggregation window
+    period_from                     VARCHAR(7),     -- 'YYYY-MM' of first active period
+    period_to                       VARCHAR(7),     -- 'YYYY-MM' of last active period
+
+    -- YTD / all-time totals
+    total_visits_ytd                INTEGER         NOT NULL DEFAULT 0,
+    total_revenue_ytd               DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+    total_tips_ytd                  DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+    total_commission_ytd            DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+    total_customers_served          INTEGER         NOT NULL DEFAULT 0,
+    total_cancelled_ytd             INTEGER         NOT NULL DEFAULT 0,
+    total_refunded_ytd              INTEGER         NOT NULL DEFAULT 0,
+
+    -- Rating aggregates
+    -- overall_avg_rating is NULL when total_review_count = 0
+    overall_avg_rating              DECIMAL(3, 2),
+    total_review_count              INTEGER         NOT NULL DEFAULT 0,
+
+    -- Derived metrics
+    lifetime_avg_revenue_per_visit  DECIMAL(15, 2)  NOT NULL DEFAULT 0,
+
+    -- Revenue share in most recent period (for Q35 — % of org revenue)
+    -- NULL for inactive staff with no activity in the latest period
+    revenue_pct_of_org_latest       DECIMAL(6, 2),
+
+    updated_at                      TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_wh_staff_summary
+        UNIQUE (business_id, employee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_staff_summary_business
+    ON wh_staff_summary (business_id);
+CREATE INDEX IF NOT EXISTS idx_wh_staff_summary_employee
+    ON wh_staff_summary (business_id, employee_id);
+-- Revenue ranking index (Q9: rank all staff by revenue)
+CREATE INDEX IF NOT EXISTS idx_wh_staff_summary_revenue_rank
+    ON wh_staff_summary (business_id, total_revenue_ytd DESC);
+-- Rating ranking index (Q10: lowest rating)
+CREATE INDEX IF NOT EXISTS idx_wh_staff_summary_rating
+    ON wh_staff_summary (business_id, overall_avg_rating ASC NULLS LAST);
+
+
+-- -----------------------------------------------------------------------------
+-- wh_staff_attendance
+-- Monthly attendance hours per staff member per location.
+-- Grain: one row per (business_id, employee_id, location_id, period_start).
+-- Source: analytics backend POST /api/v1/leo/staff-attendance
+-- Covers test questions: Q33 (who clocked the most hours)
+--
+-- Time format confirmed by team (2026-04-13): '10:44:15 PM'.
+-- No-time value '0' → excluded from duration calc, counted in days_missing_signout.
+-- Overnight shifts handled server-side. Duration capped at 24h/day.
+-- days_missing_signout is a data quality indicator, not an error.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS wh_staff_attendance (
+    id                      BIGSERIAL PRIMARY KEY,
+    business_id             INTEGER         NOT NULL,
+
+    -- Staff identifiers
+    employee_id             INTEGER         NOT NULL,
+    employee_name           VARCHAR(150)    NOT NULL DEFAULT '',
+    is_active               BOOLEAN         NOT NULL DEFAULT TRUE,
+
+    -- Location where attendance was recorded
+    location_id             INTEGER         NOT NULL DEFAULT 0,
+    location_name           VARCHAR(150)    NOT NULL DEFAULT '',
+
+    -- Period
+    period_start            DATE            NOT NULL,
+    period_end              DATE            NOT NULL,
+
+    -- Attendance counts
+    -- days_with_signin:     signed in at least once (time_sign_in != '0')
+    -- days_fully_recorded:  both sign-in and sign-out recorded — hours denominator
+    -- days_missing_signout: signed in but no sign-out — data quality flag
+    days_with_signin        INTEGER         NOT NULL DEFAULT 0,
+    days_fully_recorded     INTEGER         NOT NULL DEFAULT 0,
+    days_missing_signout    INTEGER         NOT NULL DEFAULT 0,
+
+    -- Hours worked (computed server-side from varchar time strings)
+    -- total_hours_worked: sum of durations for fully-recorded days only
+    -- avg_hours_per_day:  total_hours / days_fully_recorded (NULL if 0 days)
+    total_hours_worked      DECIMAL(8, 2)   NOT NULL DEFAULT 0,
+    avg_hours_per_day       DECIMAL(6, 2),  -- NULL when days_fully_recorded = 0
+
+    updated_at              TIMESTAMPTZ     NOT NULL DEFAULT now(),
+
+    CONSTRAINT uq_wh_staff_attendance
+        UNIQUE (business_id, employee_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_staff_attendance_business
+    ON wh_staff_attendance (business_id);
+CREATE INDEX IF NOT EXISTS idx_wh_staff_attendance_business_period
+    ON wh_staff_attendance (business_id, period_start);
+CREATE INDEX IF NOT EXISTS idx_wh_staff_attendance_employee
+    ON wh_staff_attendance (business_id, employee_id);
+-- Hours ranking index (Q33: who clocked the most hours)
+CREATE INDEX IF NOT EXISTS idx_wh_staff_attendance_hours_rank
+    ON wh_staff_attendance (business_id, period_start, total_hours_worked DESC);

@@ -85,8 +85,8 @@ class AnalyticsClient:
     Add one sub-client per domain as each sprint completes.
 
     Sprint 1  — revenue      ✅
-    Sprint 2  — appointments ⬜
-    Sprint 3  — staff        ⬜
+    Sprint 2  — appointments ✅
+    Sprint 3  — staff        ✅
     Sprint 4  — services     ⬜
     Sprint 5  — clients      ⬜
     Sprint 6  — marketing    ⬜
@@ -412,6 +412,138 @@ class AnalyticsClient:
         return await self._post(
             "/api/v1/leo/appointments/staff-service-cross", payload
         )
+
+
+    # ── STAFF PERFORMANCE DOMAIN ──────────────────────────────────────────────
+    # 3 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 3 — staff 
+
+    async def get_staff_performance_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        location_id: Optional[int] = None,
+        staff_id: Optional[int] = None,
+        include_inactive: bool = True,
+    ) -> list[dict]:
+        """
+        Monthly staff KPIs per (staff × location × period).
+
+        Returns one row per staff member per location per month in the
+        date range. Staff working across two locations return two rows
+        for the same month — one per location.
+
+        Includes inactive staff (is_active=False) by default so historical
+        data is preserved for deactivated employees. Pass include_inactive=False
+        only for "current team" views.
+
+        Powers: Q1–Q8, Q11–Q22, Q25–Q32, Q34–Q35, Q37–Q39
+
+        Key fields returned per row:
+            business_id, staff_id, staff_full_name,
+            staff_first_name, staff_last_name,
+            is_active, hire_date,
+            location_id, location_name,
+            year, month, period_label,
+            completed_visit_count, unique_customer_count,
+            revenue, tips, total_pay, avg_revenue_per_visit,
+            commission_earned,
+            cancelled_payment_count, refunded_payment_count, revoked_payment_count,
+            review_count, avg_rating (NULL when no reviews — not 0)
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+            "mode":        "monthly",
+        }
+        if location_id is not None:
+            payload["location_id"] = location_id
+        if staff_id is not None:
+            payload["staff_id"] = staff_id
+        if not include_inactive:
+            payload["include_inactive"] = False
+
+        return await self._post("/api/v1/leo/staff-performance", payload)
+
+    async def get_staff_performance_summary(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        All-time / YTD aggregated staff KPIs — one row per staff member.
+
+        Used for overall team rankings, all-time revenue leaders, and
+        aggregate team digests. Inactive staff are included so their
+        historical contribution is visible.
+
+        Powers: Q9 (rank all staff by revenue), Q10 (lowest rating),
+                Q29 (team digest), Q31 (give me team numbers)
+
+        Key fields returned per row:
+            business_id, staff_id, staff_full_name,
+            staff_first_name, staff_last_name,
+            is_active, hire_date,
+            total_visits_ytd, total_revenue_ytd,
+            total_tips_ytd, total_commission_ytd,
+            total_customers_served,
+            total_cancelled_ytd, total_refunded_ytd,
+            overall_avg_rating (NULL when no reviews),
+            total_review_count,
+            lifetime_avg_revenue_per_visit,
+            first_active_period, last_active_period,
+            revenue_pct_of_org_latest (NULL for inactive with no recent data)
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+            "mode":        "summary",
+        }
+        return await self._post("/api/v1/leo/staff-performance", payload)
+
+    async def get_staff_attendance(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        location_id: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        Monthly attendance hours per staff member per location.
+
+        Time format confirmed by team (2026-04-13): '10:44:15 PM'.
+        No-time value '0' excluded from duration calculation.
+        Overnight shifts handled server-side (+1440 min guard).
+        Duration capped at 24h/day as data sanity check.
+
+        Inactive staff (is_active=False) are included — deactivated staff
+        attendance data must be preserved for historical questions.
+
+        Powers: Q33 (who clocked the most hours)
+
+        Key fields returned per row:
+            business_id, staff_id, staff_full_name, is_active,
+            location_id, location_name,
+            year, month, period_label,
+            days_with_signin,       -- signed in at least once
+            days_fully_recorded,    -- both sign-in and sign-out (denominator for avg)
+            days_missing_signout,   -- data quality indicator
+            total_hours_worked,
+            avg_hours_per_day (NULL when days_fully_recorded = 0)
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        if location_id is not None:
+            payload["location_id"] = location_id
+
+        return await self._post("/api/v1/leo/staff-attendance", payload)
 
     # -------------------------------------------------------------------------
     # Internal HTTP helper
