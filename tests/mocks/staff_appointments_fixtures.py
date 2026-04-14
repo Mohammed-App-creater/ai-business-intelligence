@@ -42,7 +42,7 @@ STAFF_ATTENDANCE = {
          "is_active": True, "location_id": 1, "location_name": "Main St",
          "year": 2025, "month": 1, "period_label": "2025-01",
          "days_with_signin": 22, "days_fully_recorded": 21, "days_missing_signout": 1,
-         "total_hours_worked": 178.50, "avg_hours_per_day": 8.50},
+         "total_hours_worked": 182.00, "avg_hours_per_day": 8.67},
 
         {"business_id": 42, "staff_id": 12, "staff_full_name": "Maria Lopez",
          "is_active": True, "location_id": 1, "location_name": "Main St",
@@ -60,7 +60,7 @@ STAFF_ATTENDANCE = {
          "is_active": True, "location_id": 1, "location_name": "Main St",
          "year": 2025, "month": 4, "period_label": "2025-04",
          "days_with_signin": 22, "days_fully_recorded": 21, "days_missing_signout": 1,
-         "total_hours_worked": 178.50, "avg_hours_per_day": 8.50},
+         "total_hours_worked": 182.00, "avg_hours_per_day": 8.67},
 
         {"business_id": 42, "staff_id": 12, "staff_full_name": "Maria Lopez",
          "is_active": True, "location_id": 1, "location_name": "Main St",
