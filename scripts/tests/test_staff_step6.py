@@ -111,7 +111,7 @@ QUESTIONS: dict[str, dict] = {
     # ══ Category 2 — Rankings ═════════════════════════════════════════════════
 
     "Q6": {
-        "text":           "Who is my top-performing staff member this month by revenue?",
+        "text":           "Who is my top-performing staff member last month by revenue?",
         "category":       "Rankings",
         "expect_numbers": True,
         "period_keywords": ["maria", "revenue", "top", "month"],
@@ -218,7 +218,7 @@ QUESTIONS: dict[str, dict] = {
     # ══ Category 5 — Edge Cases ════════════════════════════════════════════════
 
     "Q20": {
-        "text":           "What about a staff member who had zero visits this month — do they still show up?",
+        "text":           "What about a staff member who had zero visits last month — do they still show up?",
         "category":       "Edge Cases",
         "expect_numbers": False,
         "period_keywords": ["staff", "zero", "visits", "month"],
@@ -291,7 +291,7 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q30": {
-        "text":           "Who's my MVP this month?",
+        "text":           "Who's my MVP last month?",
         "category":       "Vocabulary",
         "expect_numbers": True,
         "period_keywords": ["maria", "revenue", "top", "month"],
@@ -353,7 +353,7 @@ QUESTIONS: dict[str, dict] = {
     # ══ Category 8 — Root Cause ════════════════════════════════════════════════
 
     "Q38": {
-        "text":           "Why did revenue drop this month — was it a staffing issue?",
+        "text":           "Why did revenue drop last month — was it a staffing issue?",
         "category":       "Root Cause",
         "expect_numbers": True,
         "period_keywords": ["revenue", "staff", "month", "drop"],

@@ -51,6 +51,8 @@ _LIVE_DATA_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bright now\b", re.I),
     re.compile(r"\bat the moment\b", re.I),
     re.compile(r"\bjust now\b", re.I),
+    re.compile(r"\bthis month\b", re.I),   # NEW — in-progress month is live data
+    re.compile(r"\bthis week\b", re.I),  
 ]
 
 LIVE_DATA_REDIRECT = (
