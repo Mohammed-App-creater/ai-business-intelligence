@@ -6,9 +6,20 @@ Realistic mock response data for the 2 staff performance endpoints:
   - /api/v1/leo/staff-performance   (mode=summary)  → SUMMARY_PERFORMANCE
 
 Based on the same salon business (business_id=42) with 2 locations,
-4 staff members (Tom Rivera left after Jun 2025), covering:
+4 staff members (Tom Rivera deactivated after Jun 2025), covering:
   - Jan 2025 – Mar 2026 (15 months of monthly data)
   - Jan 2026 – Mar 2026 added to support "last month" and "last 3 months" questions
+
+OPTION A IMPLEMENTATION (Risk 3 reversal — Apr 2026):
+  Inactive/zero-visit staff now produce monthly rows with all-zero metrics.
+  This matches the Q1 SQL behavior (LEFT JOIN from tbl_emp + COALESCE).
+  Tom Rivera now has 2026 rows at his home location (Westside) with:
+    completed_visit_count=0, revenue=0.0, all metrics zero/None
+    is_active=False (deactivated after Jun 2025)
+  This makes Q20 ("zero visits — do they show up?") answerable and ensures
+  the full staff roster appears in monthly queries even after deactivation.
+  The doc generator surfaces these rows with a (DEACTIVATED) label so business
+  owners see why Tom has zeros instead of the system silently dropping him.
 
 WHY NO STAFF APPOINTMENTS DATA HERE:
   No-shows (Q40), cancellations per staff (Q39), and completion rates (Q38)
@@ -33,9 +44,9 @@ Cross-checks — completed_visit_count vs appointments by-staff completed_count:
   Maria  Jan: 71 (est) Feb: 83 ✓  Mar: 87 ✓
   James  Jan: 60 (est) Feb: 74 ✓  Mar: 79 ✓
   Aisha  Jan: 63 (est) Feb: 77 ✓  Mar: 81 ✓
-  Tom:   no 2026 rows — left after Jun 2025 ✓
+  Tom    Jan:  0 ✓     Feb:  0 ✓  Mar:  0 ✓  (deactivated, zero rows per Option A)
 
-Org-level revenue by period:
+Org-level revenue by period (unchanged — Tom's zeros add 0):
   2025-01: $11,910.40  2025-02: $10,860.20  2025-03: $13,422.70
   2025-04: $12,991.70  2025-05: $14,062.90  2025-06: $15,017.00
   2026-01: $13,900.10  2026-02: $16,780.10  2026-03: $17,716.90
@@ -178,11 +189,20 @@ MONTHLY_PERFORMANCE = {
 
         # ══════════════════════════════════════════════════════════════════════
         # TOM RIVERA — staff_id=21, Westside (location_id=2)
-        # INACTIVE — left after Jun 2025. NO 2026 rows (matches appointments_fixtures_2026).
-        # is_active=False tests Q5 (is Jake active?) and Q21 (deactivated mid-month).
-        # Lowest avg_rating (4.2) — tests Q10 (lowest rating).
+        # INACTIVE — left after Jun 2025. is_active=False.
+        # 2025 rows: real activity through Jun 2025.
+        # 2026 rows: ZERO ROWS per Option A (Risk 3 reversal).
+        #   - SQL LEFT JOIN from tbl_emp produces zero-coalesced rows for
+        #     deactivated staff — fixtures match this behavior so the ETL
+        #     test exercises the same data shape it will see in production.
+        #   - Doc generator labels these chunks as (DEACTIVATED) so the LLM
+        #     can explain *why* Tom has zeros rather than say "no data".
+        #   - Powers Q5 (last active when?), Q20 (zero visits — do they
+        #     show up?), Q21 (deactivated mid-month).
+        # Lowest avg_rating in 2025 (4.2) — tests Q10 (lowest rating).
         # ══════════════════════════════════════════════════════════════════════
 
+        # ── 2025 — real activity ──────────────────────────────────────────────
         _row(21,"Tom Rivera","Tom","Rivera",False,"2020-06-20",2,"Westside",
              2025,1, 32, 1436.80, 114.94, 1551.74, 44.90, 172.42, 5,1,1,  8,4.2),
         _row(21,"Tom Rivera","Tom","Rivera",False,"2020-06-20",2,"Westside",
@@ -195,10 +215,18 @@ MONTHLY_PERFORMANCE = {
              2025,5, 37, 1661.30, 132.90, 1794.20, 44.90, 199.36, 6,1,0,  7,4.2),
         _row(21,"Tom Rivera","Tom","Rivera",False,"2020-06-20",2,"Westside",
              2025,6, 36, 1616.40, 129.31, 1745.71, 44.90, 193.97, 5,1,0,  7,4.2),
-        # No 2026 rows for Tom ✓
+
+        # ── 2026 — zero rows (Option A: deactivated staff still appear) ──────
+        # All metrics zero. avg_rating=None (not 0.0 — semantically "no rating").
+        _row(21,"Tom Rivera","Tom","Rivera",False,"2020-06-20",2,"Westside",
+             2026,1, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0,0,0, 0, None),
+        _row(21,"Tom Rivera","Tom","Rivera",False,"2020-06-20",2,"Westside",
+             2026,2, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0,0,0, 0, None),
+        _row(21,"Tom Rivera","Tom","Rivera",False,"2020-06-20",2,"Westside",
+             2026,3, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0,0,0, 0, None),
     ],
     "meta": {
-        # 2025 totals only (Jan–Jun 2025)
+        # 2025 totals only (Jan–Jun 2025) — unchanged by Tom's 2026 zero rows
         "total_completed_visits_2025":  1170,  # matches appointments + revenue ✓
         "total_revenue_2025":           67272.90,
         "total_tips_2025":              7131.46,
@@ -301,7 +329,7 @@ SUMMARY_PERFORMANCE = {
             "total_review_count":             46,
             "lifetime_avg_revenue_per_visit": 44.90,
             "first_active_period":            "2020-07",
-            "last_active_period":             "2025-06",  # last period before leaving
+            "last_active_period":             "2025-06",  # last period of real activity
             "revenue_pct_of_org_latest":      None,       # not active in latest period
         },
     ],
