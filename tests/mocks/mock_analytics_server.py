@@ -1,9 +1,11 @@
 """
 tests/mocks/mock_analytics_server.py
 
-A lightweight FastAPI server that returns fixture data for all 10 endpoints:
+A lightweight FastAPI server that returns fixture data for all endpoints:
   - 6 revenue endpoints
   - 4 appointments endpoints
+  - 3 staff performance endpoints (2 modes + attendance)
+  - 5 services endpoints   ← NEW (Domain 4)
 
 Run this locally while the real Analytics Backend is under development —
 the ETL, embeddings, and chat pipeline can all be tested end-to-end without
@@ -42,6 +44,7 @@ from tests.mocks.staff_performance_fixtures import (
     SUMMARY_PERFORMANCE,
 )
 from tests.mocks.staff_appointments_fixtures import STAFF_ATTENDANCE
+from tests.mocks.services_fixtures import FIXTURES as SERVICES_FIXTURES
 
 
 # ── Merge 2026 data into appointments fixtures ────────────────────────────────
@@ -62,10 +65,6 @@ _appt_fixtures["/api/v1/leo/appointments/monthly-summary"]["meta"]["best_period"
 
 
 # ── Build staff performance fixtures ─────────────────────────────────────────
-# mode=monthly and mode=summary are served from the same endpoint path.
-# The handler reads the ?mode= query param and returns the correct fixture.
-# For simplicity in the fixture lookup, we store them under separate keys
-# and the handler resolves which to use.
 _staff_fixtures = {
     "/api/v1/leo/staff-performance":         MONTHLY_PERFORMANCE,
     "/api/v1/leo/staff-performance-summary": SUMMARY_PERFORMANCE,
@@ -74,15 +73,16 @@ _staff_fixtures = {
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.2.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.4.0")
 
 # Merge all fixtures into one lookup
 ALL_FIXTURES: dict[str, dict] = {
     **REVENUE_FIXTURES,
     **_appt_fixtures,
     **_staff_fixtures,
+    **SERVICES_FIXTURES,
 }
- 
+
 
 # Authorised test business IDs (simulate tenant isolation)
 AUTHORISED_BUSINESS_IDS = {42, 99, 101}
@@ -130,6 +130,7 @@ def _make_handler(captured_path: str):
     handler.__name__ = captured_path.replace("/", "_").strip("_")
     return handler
 
+
 def _make_staff_performance_handler():
     """
     Handles /api/v1/leo/staff-performance.
@@ -139,28 +140,28 @@ def _make_staff_performance_handler():
         body        = await request.json()
         business_id = body.get("business_id", 0)
         mode        = body.get("mode", "monthly")
- 
+
         if business_id not in AUTHORISED_BUSINESS_IDS:
             return JSONResponse(
                 status_code=403,
                 content={"error": f"business_id {business_id} not authorised"},
             )
- 
+
         path = (
             "/api/v1/leo/staff-performance-summary"
             if mode == "summary"
             else "/api/v1/leo/staff-performance"
         )
- 
+
         data = _response_for(path, business_id)
         if data is None:
             return JSONResponse(
                 status_code=404,
                 content={"error": f"no fixture for mode={mode}"},
             )
- 
+
         return JSONResponse(status_code=200, content=data)
- 
+
     handler.__name__ = "staff_performance_handler"
     return handler
 
@@ -183,18 +184,25 @@ APPOINTMENTS_PATHS = [
     "/api/v1/leo/appointments/staff-service-cross",
 ]
 
-# ── Staff performance endpoints (3) ──────────────────────────────────────────
-# /staff-performance: mode=monthly|summary via request body
-# /staff-attendance: hours worked — only staff data not in any other domain
+# ── Staff performance endpoints (1 standard + 1 mode-switched) ───────────────
 STAFF_STANDARD_PATHS = [
     "/api/v1/leo/staff-attendance",
 ]
 
-ALL_PATHS = REVENUE_PATHS + APPOINTMENTS_PATHS + STAFF_STANDARD_PATHS
+# ── Services endpoints (5) ── NEW ─────────────────────────────────────────────
+SERVICES_PATHS = [
+    "/api/v1/leo/services/monthly-summary",
+    "/api/v1/leo/services/booking-stats",
+    "/api/v1/leo/services/staff-matrix",
+    "/api/v1/leo/services/co-occurrence",
+    "/api/v1/leo/services/catalog",
+]
+
+ALL_PATHS = REVENUE_PATHS + APPOINTMENTS_PATHS + STAFF_STANDARD_PATHS + SERVICES_PATHS
 
 for _path in ALL_PATHS:
     app.add_api_route(_path, _make_handler(_path), methods=["POST"])
-    
+
 # Staff performance needs its own handler (mode switching)
 app.add_api_route(
     "/api/v1/leo/staff-performance",
@@ -210,11 +218,13 @@ async def health():
     return {
         "status": "ok",
         "mode": "mock",
-        "version": "1.1.0",
+        "version": "1.4.0",
         "endpoints": {
             "revenue":      len(REVENUE_PATHS),
             "appointments": len(APPOINTMENTS_PATHS),
-            "total":        len(ALL_PATHS),
+            "staff":        len(STAFF_STANDARD_PATHS) + 1,  # +1 for mode-switched
+            "services":     len(SERVICES_PATHS),
+            "total":        len(ALL_PATHS) + 1,
         },
     }
 
@@ -225,12 +235,6 @@ class MockAnalyticsServer:
     """
     Starts the mock server in a background thread.
     Picks a free port automatically.
-
-    Usage:
-        server = MockAnalyticsServer()
-        server.start()
-        yield server.base_url
-        server.stop()
     """
 
     def __init__(self, host: str = "127.0.0.1"):
@@ -251,12 +255,11 @@ class MockAnalyticsServer:
             app=app,
             host=self.host,
             port=self.port,
-            log_level="warning",  # quiet during tests
+            log_level="warning",
         )
         self._server = uvicorn.Server(config)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
-        # Wait until the server is actually accepting connections
         import time
         for _ in range(20):
             try:
@@ -281,13 +284,13 @@ def start_mock_server() -> MockAnalyticsServer:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting LEO Mock Analytics Server v1.3.0, on http://localhost:8001")
+    print("Starting LEO Mock Analytics Server v1.4.0 on http://localhost:8001")
     print()
-    print("Revenue endpoints:")
+    print("Revenue endpoints (6):")
     for p in REVENUE_PATHS:
         print(f"  POST {p}")
     print()
-    print("Appointments endpoints:")
+    print("Appointments endpoints (4):")
     for p in APPOINTMENTS_PATHS:
         print(f"  POST {p}")
     print()
@@ -295,5 +298,10 @@ if __name__ == "__main__":
     print("  POST /api/v1/leo/staff-performance   {mode: 'monthly'|'summary'}")
     print("  POST /api/v1/leo/staff-attendance")
     print()
+    print("Services endpoints (5):")
+    for p in SERVICES_PATHS:
+        print(f"  POST {p}")
+    print()
+    print(f"Total: {len(ALL_PATHS) + 1} endpoints")
     print("Health: GET http://localhost:8001/health")
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)

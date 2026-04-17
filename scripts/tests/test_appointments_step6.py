@@ -61,10 +61,10 @@ QUESTIONS: dict[str, dict] = {
 
     # ── Volume & Counts ───────────────────────────────────────────────────────
     "Q1": {
-        "text":     "How many appointments did we have this month?",
+        "text":     "How many appointments did we have last month?",
         "category": "Volume & Counts",
         "expect_numbers": True,
-        "period_keywords": ["month", "this month"],
+        "period_keywords": ["month", "last month"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q2": {
@@ -82,10 +82,10 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data"],
     },
     "Q4": {
-        "text":     "How many appointments did we have this month?",
+        "text":     "How many appointments did we have last month?",
         "category": "Volume & Counts",
         "expect_numbers": True,
-        "period_keywords": ["month", "this month"],
+        "period_keywords": ["month", "last month"],
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
 
@@ -158,7 +158,7 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data"],
     },
     "Q14": {
-        "text":     "How many appointments did Maria Lopez complete this month?",
+        "text":     "How many appointments did Maria Lopez complete last month?",
         "category": "Staff",
         "expect_numbers": True,
         "period_keywords": ["maria", "lopez", "month", "complete"],
@@ -232,7 +232,7 @@ QUESTIONS: dict[str, dict] = {
 
     # ── Cancellation Analysis ─────────────────────────────────────────────────
     "Q24": {
-        "text":     "What is our cancellation rate this month?",
+        "text":     "What is our cancellation rate last month?",
         "category": "Cancellations",
         "expect_numbers": True,
         "period_keywords": ["cancellation", "cancel", "rate", "%", "month"],
@@ -262,7 +262,7 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data"],
     },
     "Q28": {
-        "text":     "Which location has the highest cancellation rate this month?",
+        "text":     "Which location has the highest cancellation rate last month?",
         "category": "Location",
         "expect_numbers": True,
         "period_keywords": ["cancellation", "cancel", "rate", "%", "location", "branch", "westside", "main st"],
