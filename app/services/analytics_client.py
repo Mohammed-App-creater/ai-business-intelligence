@@ -87,7 +87,7 @@ class AnalyticsClient:
     Sprint 1  — revenue      ✅
     Sprint 2  — appointments ✅
     Sprint 3  — staff        ✅
-    Sprint 4  — services     ⬜
+    Sprint 4  — services     ✅
     Sprint 5  — clients      ⬜
     Sprint 6  — marketing    ⬜
     Sprint 7  — memberships  ⬜
@@ -544,6 +544,172 @@ class AnalyticsClient:
             payload["location_id"] = location_id
 
         return await self._post("/api/v1/leo/staff-attendance", payload)
+
+    # ── SERVICES DOMAIN ───────────────────────────────────────────────────────
+    # 5 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 4 — services
+
+    async def get_service_monthly_summary(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        service_id: Optional[int] = None,
+        location_id: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        Per-service per-location monthly aggregations from paid visits.
+        Revenue, margin, commission, distinct clients.
+
+        Source: tbl_service_visit × tbl_visit (PaymentStatus=1)
+
+        Powers: Q2,3,5,6,7,8,9,10,11,12,13,14,16,17,18,24,26,30
+
+        Key fields returned per row:
+            service_id, service_name, category_name,
+            location_id, location_name, period_start,
+            performed_count, distinct_clients, repeat_visit_proxy,
+            total_revenue, avg_charged_price,
+            total_emp_commission, gross_margin,
+            commission_pct_of_revenue, mom_revenue_growth_pct,
+            revenue_rank, margin_rank
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        if service_id is not None:
+            payload["service_id"] = service_id
+        if location_id is not None:
+            payload["location_id"] = location_id
+
+        return await self._post(
+            "/api/v1/leo/services/monthly-summary", payload
+        )
+
+    async def get_service_booking_stats(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        service_id: Optional[int] = None,
+        location_id: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        Per-service per-location monthly booking counts from tbl_calendarevent.
+        Includes cancellations, no-shows, duration analysis, time-slot distribution.
+
+        Powers: Q1,4,14,15,16,24,25,26,27,28
+
+        Key fields returned per row:
+            service_id, service_name, location_id, location_name, period_start,
+            total_booked, completed_count, cancelled_count, no_show_count,
+            cancellation_rate_pct, avg_actual_duration_min, distinct_clients,
+            morning_bookings, afternoon_bookings, evening_bookings,
+            mom_bookings_growth_pct
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        if service_id is not None:
+            payload["service_id"] = service_id
+        if location_id is not None:
+            payload["location_id"] = location_id
+
+        return await self._post(
+            "/api/v1/leo/services/booking-stats", payload
+        )
+
+    async def get_service_staff_matrix(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        service_id: Optional[int] = None,
+        staff_id: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        Who performs which services, how often, how much revenue.
+        Per staff per service per month.
+
+        Powers: Q21,22,23
+
+        Key fields returned per row:
+            service_id, service_name, staff_id, staff_name, period_start,
+            performed_count, revenue, commission_paid
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+        }
+        if service_id is not None:
+            payload["service_id"] = service_id
+        if staff_id is not None:
+            payload["staff_id"] = staff_id
+
+        return await self._post(
+            "/api/v1/leo/services/staff-matrix", payload
+        )
+
+    async def get_service_co_occurrence(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        min_occurrences: int = 2,
+    ) -> list[dict]:
+        """
+        Pairs of services performed together in the same paid visit.
+
+        Powers: Q19
+
+        Key fields returned per row:
+            period_start, service_a_id, service_a_name,
+            service_b_id, service_b_name, co_occurrence_count
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "min_occurrences": min_occurrences,
+        }
+
+        return await self._post(
+            "/api/v1/leo/services/co-occurrence", payload
+        )
+
+    async def get_service_catalog(
+        self,
+        business_id: int,
+        active_only: bool = False,
+    ) -> list[dict]:
+        """
+        Current catalog snapshot — one row per service.
+        Not period-based. Includes lifecycle signals.
+
+        Powers: Q7,9,10,20,27,29,30
+
+        Key fields returned per row:
+            service_id, service_name, category_name,
+            list_price, default_commission_rate, commission_type,
+            scheduled_duration_min, is_active, created_at,
+            home_location_id, last_sold_date, days_since_last_sale,
+            lifetime_performed_count, new_client_first_service_count,
+            dormant_flag, is_new_this_year,
+            avg_discount_pct, scheduled_vs_actual_delta_min
+        """
+        payload = {
+            "business_id": business_id,
+            "active_only": active_only,
+        }
+
+        return await self._post(
+            "/api/v1/leo/services/catalog", payload
+        )
 
     # -------------------------------------------------------------------------
     # Internal HTTP helper

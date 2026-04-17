@@ -707,3 +707,260 @@ CREATE INDEX IF NOT EXISTS idx_wh_staff_attendance_employee
 -- Hours ranking index (Q33: who clocked the most hours)
 CREATE INDEX IF NOT EXISTS idx_wh_staff_attendance_hours_rank
     ON wh_staff_attendance (business_id, period_start, total_hours_worked DESC);
+
+
+
+-- =============================================================================
+-- Services Domain — Warehouse Tables
+-- Append to infra/init_db.sql
+-- 5 tables matching the 5 API endpoints / query sets
+-- =============================================================================
+
+-- EP1: Service Monthly Summary (performed/paid side)
+CREATE TABLE IF NOT EXISTS wh_svc_monthly_summary (
+    id                          SERIAL PRIMARY KEY,
+    business_id                 INTEGER NOT NULL,
+    service_id                  INTEGER NOT NULL,
+    service_name                TEXT NOT NULL,
+    category_name               TEXT,
+    location_id                 INTEGER NOT NULL,
+    location_name               TEXT NOT NULL,
+    period_start                DATE NOT NULL,
+    performed_count             INTEGER NOT NULL DEFAULT 0,
+    distinct_clients            INTEGER NOT NULL DEFAULT 0,
+    repeat_visit_proxy          INTEGER NOT NULL DEFAULT 0,
+    total_revenue               NUMERIC(12,2) NOT NULL DEFAULT 0,
+    avg_charged_price           NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_emp_commission        NUMERIC(12,2) NOT NULL DEFAULT 0,
+    gross_margin                NUMERIC(12,2) NOT NULL DEFAULT 0,
+    commission_pct_of_revenue   NUMERIC(5,1),
+    mom_revenue_growth_pct      NUMERIC(6,1),
+    revenue_rank                INTEGER,
+    margin_rank                 INTEGER,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_monthly UNIQUE (business_id, service_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_monthly_biz_period
+    ON wh_svc_monthly_summary (business_id, period_start);
+
+-- EP2: Service Booking Stats (booking side)
+CREATE TABLE IF NOT EXISTS wh_svc_booking_stats (
+    id                          SERIAL PRIMARY KEY,
+    business_id                 INTEGER NOT NULL,
+    service_id                  INTEGER NOT NULL,
+    service_name                TEXT NOT NULL,
+    location_id                 INTEGER NOT NULL,
+    location_name               TEXT NOT NULL,
+    period_start                DATE NOT NULL,
+    total_booked                INTEGER NOT NULL DEFAULT 0,
+    completed_count             INTEGER NOT NULL DEFAULT 0,
+    cancelled_count             INTEGER NOT NULL DEFAULT 0,
+    no_show_count               INTEGER NOT NULL DEFAULT 0,
+    cancellation_rate_pct       NUMERIC(5,1),
+    avg_actual_duration_min     NUMERIC(6,1),
+    distinct_clients            INTEGER NOT NULL DEFAULT 0,
+    morning_bookings            INTEGER NOT NULL DEFAULT 0,
+    afternoon_bookings          INTEGER NOT NULL DEFAULT 0,
+    evening_bookings            INTEGER NOT NULL DEFAULT 0,
+    mom_bookings_growth_pct     NUMERIC(6,1),
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_booking UNIQUE (business_id, service_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_booking_biz_period
+    ON wh_svc_booking_stats (business_id, period_start);
+
+-- EP3: Service × Staff Matrix
+CREATE TABLE IF NOT EXISTS wh_svc_staff_matrix (
+    id                  SERIAL PRIMARY KEY,
+    business_id         INTEGER NOT NULL,
+    service_id          INTEGER NOT NULL,
+    service_name        TEXT NOT NULL,
+    staff_id            INTEGER NOT NULL,
+    staff_name          TEXT NOT NULL,
+    period_start        DATE NOT NULL,
+    performed_count     INTEGER NOT NULL DEFAULT 0,
+    revenue             NUMERIC(12,2) NOT NULL DEFAULT 0,
+    commission_paid     NUMERIC(12,2) NOT NULL DEFAULT 0,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_staff UNIQUE (business_id, service_id, staff_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_staff_biz_period
+    ON wh_svc_staff_matrix (business_id, period_start);
+
+-- EP4: Service Co-occurrence
+CREATE TABLE IF NOT EXISTS wh_svc_co_occurrence (
+    id                      SERIAL PRIMARY KEY,
+    business_id             INTEGER NOT NULL,
+    period_start            DATE NOT NULL,
+    service_a_id            INTEGER NOT NULL,
+    service_a_name          TEXT NOT NULL,
+    service_b_id            INTEGER NOT NULL,
+    service_b_name          TEXT NOT NULL,
+    co_occurrence_count     INTEGER NOT NULL DEFAULT 0,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_cooccur UNIQUE (business_id, service_a_id, service_b_id, period_start)
+);
+
+-- EP5: Service Catalog Snapshot
+CREATE TABLE IF NOT EXISTS wh_svc_catalog (
+    id                              SERIAL PRIMARY KEY,
+    business_id                     INTEGER NOT NULL,
+    service_id                      INTEGER NOT NULL,
+    service_name                    TEXT NOT NULL,
+    category_name                   TEXT,
+    list_price                      NUMERIC(10,2) NOT NULL DEFAULT 0,
+    default_commission_rate         NUMERIC(5,2),
+    commission_type                 VARCHAR(1) NOT NULL DEFAULT '%',
+    scheduled_duration_min          INTEGER NOT NULL DEFAULT 0,
+    is_active                       BOOLEAN NOT NULL DEFAULT true,
+    created_at                      TIMESTAMPTZ,
+    home_location_id                INTEGER,
+    last_sold_date                  TIMESTAMPTZ,
+    days_since_last_sale            INTEGER,
+    lifetime_performed_count        INTEGER NOT NULL DEFAULT 0,
+    new_client_first_service_count  INTEGER NOT NULL DEFAULT 0,
+    dormant_flag                    BOOLEAN NOT NULL DEFAULT false,
+    is_new_this_year                BOOLEAN NOT NULL DEFAULT false,
+    avg_discount_pct                NUMERIC(5,1),
+    scheduled_vs_actual_delta_min   NUMERIC(5,1),
+    refreshed_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_catalog UNIQUE (business_id, service_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_catalog_biz
+    ON wh_svc_catalog (business_id);
+
+
+-- =============================================================================
+-- Services Domain — Warehouse Tables
+-- Append to infra/init_db.sql
+-- 5 tables matching the 5 API endpoints / query sets
+-- =============================================================================
+
+-- EP1: Service Monthly Summary (performed/paid side)
+CREATE TABLE IF NOT EXISTS wh_svc_monthly_summary (
+    id                          SERIAL PRIMARY KEY,
+    business_id                 INTEGER NOT NULL,
+    service_id                  INTEGER NOT NULL,
+    service_name                TEXT NOT NULL,
+    category_name               TEXT,
+    location_id                 INTEGER NOT NULL,
+    location_name               TEXT NOT NULL,
+    period_start                DATE NOT NULL,
+    performed_count             INTEGER NOT NULL DEFAULT 0,
+    distinct_clients            INTEGER NOT NULL DEFAULT 0,
+    repeat_visit_proxy          INTEGER NOT NULL DEFAULT 0,
+    total_revenue               NUMERIC(12,2) NOT NULL DEFAULT 0,
+    avg_charged_price           NUMERIC(10,2) NOT NULL DEFAULT 0,
+    total_emp_commission        NUMERIC(12,2) NOT NULL DEFAULT 0,
+    gross_margin                NUMERIC(12,2) NOT NULL DEFAULT 0,
+    commission_pct_of_revenue   NUMERIC(5,1),
+    mom_revenue_growth_pct      NUMERIC(6,1),
+    revenue_rank                INTEGER,
+    margin_rank                 INTEGER,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_monthly UNIQUE (business_id, service_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_monthly_biz_period
+    ON wh_svc_monthly_summary (business_id, period_start);
+
+-- EP2: Service Booking Stats (booking side)
+CREATE TABLE IF NOT EXISTS wh_svc_booking_stats (
+    id                          SERIAL PRIMARY KEY,
+    business_id                 INTEGER NOT NULL,
+    service_id                  INTEGER NOT NULL,
+    service_name                TEXT NOT NULL,
+    location_id                 INTEGER NOT NULL,
+    location_name               TEXT NOT NULL,
+    period_start                DATE NOT NULL,
+    total_booked                INTEGER NOT NULL DEFAULT 0,
+    completed_count             INTEGER NOT NULL DEFAULT 0,
+    cancelled_count             INTEGER NOT NULL DEFAULT 0,
+    no_show_count               INTEGER NOT NULL DEFAULT 0,
+    cancellation_rate_pct       NUMERIC(5,1),
+    avg_actual_duration_min     NUMERIC(6,1),
+    distinct_clients            INTEGER NOT NULL DEFAULT 0,
+    morning_bookings            INTEGER NOT NULL DEFAULT 0,
+    afternoon_bookings          INTEGER NOT NULL DEFAULT 0,
+    evening_bookings            INTEGER NOT NULL DEFAULT 0,
+    mom_bookings_growth_pct     NUMERIC(6,1),
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_booking UNIQUE (business_id, service_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_booking_biz_period
+    ON wh_svc_booking_stats (business_id, period_start);
+
+-- EP3: Service × Staff Matrix
+CREATE TABLE IF NOT EXISTS wh_svc_staff_matrix (
+    id                  SERIAL PRIMARY KEY,
+    business_id         INTEGER NOT NULL,
+    service_id          INTEGER NOT NULL,
+    service_name        TEXT NOT NULL,
+    staff_id            INTEGER NOT NULL,
+    staff_name          TEXT NOT NULL,
+    period_start        DATE NOT NULL,
+    performed_count     INTEGER NOT NULL DEFAULT 0,
+    revenue             NUMERIC(12,2) NOT NULL DEFAULT 0,
+    commission_paid     NUMERIC(12,2) NOT NULL DEFAULT 0,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_staff UNIQUE (business_id, service_id, staff_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_staff_biz_period
+    ON wh_svc_staff_matrix (business_id, period_start);
+
+-- EP4: Service Co-occurrence
+CREATE TABLE IF NOT EXISTS wh_svc_co_occurrence (
+    id                      SERIAL PRIMARY KEY,
+    business_id             INTEGER NOT NULL,
+    period_start            DATE NOT NULL,
+    service_a_id            INTEGER NOT NULL,
+    service_a_name          TEXT NOT NULL,
+    service_b_id            INTEGER NOT NULL,
+    service_b_name          TEXT NOT NULL,
+    co_occurrence_count     INTEGER NOT NULL DEFAULT 0,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_cooccur UNIQUE (business_id, service_a_id, service_b_id, period_start)
+);
+
+-- EP5: Service Catalog Snapshot
+CREATE TABLE IF NOT EXISTS wh_svc_catalog (
+    id                              SERIAL PRIMARY KEY,
+    business_id                     INTEGER NOT NULL,
+    service_id                      INTEGER NOT NULL,
+    service_name                    TEXT NOT NULL,
+    category_name                   TEXT,
+    list_price                      NUMERIC(10,2) NOT NULL DEFAULT 0,
+    default_commission_rate         NUMERIC(5,2),
+    commission_type                 VARCHAR(1) NOT NULL DEFAULT '%',
+    scheduled_duration_min          INTEGER NOT NULL DEFAULT 0,
+    is_active                       BOOLEAN NOT NULL DEFAULT true,
+    created_at                      TIMESTAMPTZ,
+    home_location_id                INTEGER,
+    last_sold_date                  TIMESTAMPTZ,
+    days_since_last_sale            INTEGER,
+    lifetime_performed_count        INTEGER NOT NULL DEFAULT 0,
+    new_client_first_service_count  INTEGER NOT NULL DEFAULT 0,
+    dormant_flag                    BOOLEAN NOT NULL DEFAULT false,
+    is_new_this_year                BOOLEAN NOT NULL DEFAULT false,
+    avg_discount_pct                NUMERIC(5,1),
+    scheduled_vs_actual_delta_min   NUMERIC(5,1),
+    refreshed_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT uq_svc_catalog UNIQUE (business_id, service_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_svc_catalog_biz
+    ON wh_svc_catalog (business_id);

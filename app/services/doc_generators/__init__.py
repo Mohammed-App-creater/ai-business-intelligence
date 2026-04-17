@@ -25,6 +25,8 @@ from app.services.doc_generators.domains.appointments import generate_appointmen
 from etl.transforms.appointments_etl import AppointmentsExtractor
 from app.services.doc_generators.domains.staff import generate_staff_docs
 from etl.transforms.staff_etl import StaffExtractor
+from app.services.doc_generators.domains.services import generate_service_docs
+from etl.transforms.services_etl import ServicesExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
@@ -627,6 +629,30 @@ class DocGenerator:
         extractor = StaffExtractor(client=client, wh_pool=self._wh._pool)
         return await extractor.run(org_id, start_date, end_date)
 
+    async def _fetch_services_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "monthly_summary": [],
+                "booking_stats":   [],
+                "staff_matrix":    [],
+                "co_occurrence":   [],
+                "catalog":         [],
+                "counts":          {},
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = ServicesExtractor(client=client)
+        return await extractor.run(org_id, start_date, end_date)
+
     async def generate_all(
         self,
         org_id:       int,
@@ -1012,26 +1038,23 @@ class DocGenerator:
     async def _gen_services(
         self, org_id: int, period_start: date | None, months: int, force: bool
     ) -> tuple[int, int, int]:
-        created = skipped = failed = 0
-        tenant = str(org_id)
-        for ps in self._month_periods(period_start, months):
-            pl = self._period_label(ps)
-            rows = await self._wh.services.get_service_monthly_performance(org_id, ps)
-            if not rows:
-                continue
-            kpi = self._kpi_services(rows, pl)
-            doc_id = f"{org_id}_services_monthly_{self._doc_month_suffix(ps)}"
-            data = DocGenData(
-                business_id=str(org_id),
-                business_type=self._biz_type,
-                period=pl,
-                doc_domain="services",
-                doc_type="monthly_summary",
-                kpi_block=kpi,
-            )
-            chunk = await self._make_chunk_text(org_id, data)
+        data = await self._fetch_services_warehouse_rows(
+            org_id, period_start, months
+        )
+        result = generate_service_docs(org_id, data)
+        created = 0
+        skipped = result.get("docs_skipped", 0)
+        failed  = result.get("docs_failed", 0)
+        for doc in result.get("docs", []):
             st = await self._store_doc(
-                tenant, doc_id, "services", "monthly_summary", chunk, ps, {}, force
+                doc["tenant_id"],
+                doc["doc_id"],
+                doc["doc_domain"],
+                doc["doc_type"],
+                doc["chunk_text"],
+                doc.get("period_start"),
+                doc.get("metadata", {}),
+                force,
             )
             if st == "created":
                 created += 1
