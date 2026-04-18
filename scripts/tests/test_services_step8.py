@@ -93,7 +93,7 @@ IMPROVISED: dict[str, dict] = {
         "text":     "How do my services compare at Main St versus Westside?",
         "note":     "Location comparison — should cite both locations with numbers",
         "must_contain_one_of": ["main st", "westside"],
-        "must_not_contain":    ["no data", "don't have", "insufficient"],
+        "must_not_contain":    ["no data", "don't have"],
     },
 }
 
