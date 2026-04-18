@@ -219,8 +219,60 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "staffing", "staffing issue",
     ],
     "services": [
+        # Core vocabulary
         "service", "services", "treatment", "treatments", "menu",
+        "service menu", "service list", "service catalog",
         "popularity", "upsell", "add-on", "add on", "package",
+
+        # Revenue & pricing (Q6–Q10)
+        "service revenue", "service price", "list price", "charged price",
+        "avg price", "average price", "discounted", "discounting",
+        "most discounted", "price difference",
+
+        # Margin & commission (Q11–Q13)
+        "profitable service", "most profitable", "service margin",
+        "margin by service", "margin by category", "commission cost",
+        "commission percentage", "after commission",
+
+        # Trends (Q14–Q17)
+        "service trend", "service trending", "service growing",
+        "service declining", "biggest jump", "fastest growing service",
+
+        # Repeat clients (Q18)
+        "repeat clients by service", "most repeat",
+
+        # Co-occurrence / combos (Q19)
+        "booked together", "performed together", "combo",
+        "paired with", "co-occurrence", "commonly booked",
+
+        # First service (Q20)
+        "first service", "new client first", "what do new clients book",
+
+        # Staff × service (Q21–Q23)
+        "who performs", "specializes in", "specialise",
+        "only one staff", "single staff",
+
+        # Location × service (Q24–Q26)
+        "popular at branch", "popular at location",
+        "service at location", "service by branch",
+        "not offered", "location gap",
+
+        # Duration (Q27–Q28)
+        "runs longer", "over schedule", "actual duration",
+        "scheduled vs actual", "service duration",
+        "how long does", "takes longer",
+
+        # Catalog health (Q29–Q30)
+        "dormant", "dormant service", "hasn't sold",
+        "no sales", "inactive service", "discontinued",
+        "new service", "recently added", "new this year",
+        "added this year", "add this year", "introduced this year",
+        "new services", "added to the menu", "added to menu",
+        "service performance",
+
+        # Category (Q10, Q12)
+        "service category", "by category", "category breakdown",
+        "skincare", "massage", "hair", "nails",
     ],
     "time_comparisons": [
         "this month", "last month", "this week", "last week",
@@ -445,13 +497,19 @@ class QueryAnalyzer:
                     )
 
         # 1b. Possessive / first-person → almost certainly RAG
+        # But also run domain keyword matching so _resolve_domains can filter
         my_matches = [p.pattern for p in MY_PATTERNS if p.search(question)]
         if my_matches:
+            # Also collect domain keywords so retriever can narrow the search
+            domain_kws = [
+                kw for kw in _RAG_KEYWORDS
+                if re.search(r"\b" + re.escape(kw) + r"\b", q_lower)
+            ]
             return AnalysisResult(
                 route=Route.RAG,
                 confidence=0.95,
                 method="rules",
-                matched_keywords=my_matches,
+                matched_keywords=my_matches + domain_kws,
                 reasoning="Possessive/first-person pronoun detected.",
             )
 

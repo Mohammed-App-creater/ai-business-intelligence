@@ -20,8 +20,27 @@ Content-Type: application/json
 {
   "org_id": "42",
   "business_id": "42",
-  "question": "Is my revenue trending up or down over the last 6 months?"
+  "question": "Which services did I add this year — how are they performing?"
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 # ── Mock Analytics Server: 6 revenue + 4 appointments POST + GET /health

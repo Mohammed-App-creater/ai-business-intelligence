@@ -691,6 +691,12 @@ CATALOG = {
 }
 
 
+# Tag Express Facial (service_id=7) monthly rows as new this year
+for row in MONTHLY_SUMMARY["data"]:
+    if row["service_id"] == 7:
+        row["is_new_this_year"] = True
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Fixture lookup — endpoint path → fixture
 # ─────────────────────────────────────────────────────────────────────────────

@@ -56,7 +56,7 @@ def _chunk_monthly_summary(row: dict) -> str:
     repeat_pct = round(repeat / perf * 100, 1) if perf > 0 else 0
 
     lines = [
-        f"Service Performance — {svc} ({cat}) — {loc} — {period}",
+        f"Service Performance — {svc} ({cat}) — {loc} branch/location — {period}",
         f"Performed {perf} times for {clients} unique clients "
         f"({repeat} repeat visits, {repeat_pct}% repeat rate).",
         f"Revenue: ${rev:,.2f} (avg ${avg_p:.2f} per appointment, "
@@ -74,6 +74,9 @@ def _chunk_monthly_summary(row: dict) -> str:
     if mom is not None:
         direction = "up" if mom > 0 else "down" if mom < 0 else "flat"
         lines.append(f"Month-over-month revenue change: {mom:+.1f}% ({direction}).")
+
+    if row.get("is_new_this_year"):
+        lines.append("This is a new service added to the menu this year.")
 
     return "\n".join(lines).strip()
 
@@ -98,7 +101,7 @@ def _chunk_booking_stats(row: dict) -> str:
     peak = max(slots, key=slots.get) if any(slots.values()) else "n/a"
 
     lines = [
-        f"Service Bookings — {svc} — {loc} — {period}",
+        f"Service Bookings — {svc} — {loc} branch/location — {period}",
         f"Total booked: {booked}. Completed: {completed}. "
         f"Cancelled: {cancelled} ({canc_pct:.1f}%). No-shows: {no_show}.",
         f"{clients} unique clients booked this service.",
@@ -175,7 +178,7 @@ def _chunk_catalog(row: dict) -> str:
     else:
         status_parts.append("Active")
     if new:
-        status_parts.append("NEW this year")
+        status_parts.append("NEW — added this year")
     status = ", ".join(status_parts)
 
     lines = [
@@ -212,6 +215,11 @@ def _chunk_catalog(row: dict) -> str:
 
     if last:
         lines.append(f"Last sold: {last[:10]}. Days since last sale: {days}.")
+
+    if new:
+        lines.append(
+            "This service was recently added to the menu this year and is still building momentum."
+        )
 
     return "\n".join(lines).strip()
 
