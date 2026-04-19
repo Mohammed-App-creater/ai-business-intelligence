@@ -711,6 +711,119 @@ class AnalyticsClient:
             "/api/v1/leo/services/catalog", payload
         )
 
+    # ── CLIENTS DOMAIN ────────────────────────────────────────────────────────
+    # 3 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 5 — clients
+
+    async def get_clients_retention_snapshot(
+        self,
+        business_id: int,
+        period_start: date,
+        period_end: date,
+        ref_date: date,
+        churn_threshold_days: int = 60,
+        only_reachable: bool = False,
+        only_not_deleted: bool = False,
+        include_names: bool = False,          # ← default False for AI path (PII)
+        sort_by: str = "lifetime_revenue",
+        sort_order: str = "desc",
+        limit: int = 1000,
+        offset: int = 0,
+    ) -> list[dict]:
+        """
+        EP1 — Per-client retention snapshot. One row per client linked to the
+        business. Includes ranks, flags, LTV decile, and (optionally) names.
+
+        Powers per-client questions: Q7, Q8, Q9, Q11, Q14, Q18, Q21, Q22.
+
+        CRITICAL PII NOTE:
+          `include_names` defaults to False on the Python client. The AI
+          path must NEVER flip this to True. Only ops/CSV export tools
+          should override. Keeps first_name/last_name out of RAG chunks
+          by default (defense in depth — Step 1 decision D10).
+        """
+        payload = {
+            "business_id":          business_id,
+            "period_start":         period_start.isoformat(),
+            "period_end":           period_end.isoformat(),
+            "ref_date":             ref_date.isoformat(),
+            "churn_threshold_days": churn_threshold_days,
+            "only_reachable":       only_reachable,
+            "only_not_deleted":     only_not_deleted,
+            "include_names":        include_names,
+            "sort_by":              sort_by,
+            "sort_order":           sort_order,
+            "limit":                limit,
+            "offset":               offset,
+        }
+        body = await self._post_full(
+            "/api/v1/leo/clients/retention-snapshot",
+            payload,
+        )
+        return body.get("data", [])
+
+    async def get_clients_cohort_monthly(
+        self,
+        business_id: int,
+        start_month: date,
+        end_month: date,
+        ref_date: date,
+        churn_threshold_days: int = 60,
+    ) -> list[dict]:
+        """
+        EP2 — Per-period cohort summary with MoM deltas and cohort retention.
+        One row per (business, month).
+
+        Powers aggregate/trend questions: Q1, Q2, Q3, Q4, Q5, Q6, Q12,
+        Q15, Q16, Q17, Q19, Q23.
+
+        Cohort retention (retention_rate_pct) = Option A — % of prior
+        period's actives who returned this period. Not a simple
+        aggregate ratio. See Step 3 spec §3.4.
+        """
+        payload = {
+            "business_id":          business_id,
+            "start_month":          start_month.isoformat(),
+            "end_month":            end_month.isoformat(),
+            "ref_date":             ref_date.isoformat(),
+            "churn_threshold_days": churn_threshold_days,
+        }
+        body = await self._post_full(
+            "/api/v1/leo/clients/cohort-monthly",
+            payload,
+        )
+        return body.get("data", [])
+
+    async def get_clients_per_location_monthly(
+        self,
+        business_id: int,
+        start_month: date,
+        end_month: date,
+        location_id: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        EP3 — Per-location per-month breakdown. One row per (business,
+        location, month).
+
+        Powers branch-comparison questions: Q20 (which branch got most
+        new clients), Q10 (per-location decomposition of new-client drop).
+
+        Attribution is by first-visit location (where the client was
+        acquired), not home location.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_month": start_month.isoformat(),
+            "end_month":   end_month.isoformat(),
+        }
+        if location_id is not None:
+            payload["location_id"] = location_id
+        body = await self._post_full(
+            "/api/v1/leo/clients/per-location-monthly",
+            payload,
+        )
+        return body.get("data", [])
+
     # -------------------------------------------------------------------------
     # Internal HTTP helper
     # -------------------------------------------------------------------------
@@ -724,6 +837,26 @@ class AnalyticsClient:
                 body = response.json()
                 # All analytics endpoints return { "data": [...], "meta": {...} }
                 return body.get("data", [])
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Analytics API HTTP error: %s %s → %s",
+                e.request.method,
+                e.request.url,
+                e.response.status_code,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error("Analytics API request failed: %s", e)
+            raise
+
+    async def _post_full(self, path: str, payload: dict) -> dict:
+        """Returns the full response body (includes data[] + meta fields)."""
+        url = f"{self.base_url}{path}"
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, json=payload)
+                response.raise_for_status()
+                return response.json()
         except httpx.HTTPStatusError as e:
             logger.error(
                 "Analytics API HTTP error: %s %s → %s",
