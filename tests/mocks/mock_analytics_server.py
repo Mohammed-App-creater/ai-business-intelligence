@@ -6,6 +6,7 @@ A lightweight FastAPI server that returns fixture data for all endpoints:
   - 4 appointments endpoints
   - 3 staff performance endpoints (2 modes + attendance)
   - 5 services endpoints   ← NEW (Domain 4)
+  - 3 clients endpoints    ← NEW (Domain 5)
 
 Run this locally while the real Analytics Backend is under development —
 the ETL, embeddings, and chat pipeline can all be tested end-to-end without
@@ -45,6 +46,7 @@ from tests.mocks.staff_performance_fixtures import (
 )
 from tests.mocks.staff_appointments_fixtures import STAFF_ATTENDANCE
 from tests.mocks.services_fixtures import FIXTURES as SERVICES_FIXTURES
+from tests.mocks.clients_fixtures import FIXTURES as CLIENTS_FIXTURES
 
 
 # ── Merge 2026 data into appointments fixtures ────────────────────────────────
@@ -73,7 +75,7 @@ _staff_fixtures = {
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.4.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.5.0")
 
 # Merge all fixtures into one lookup
 ALL_FIXTURES: dict[str, dict] = {
@@ -81,6 +83,7 @@ ALL_FIXTURES: dict[str, dict] = {
     **_appt_fixtures,
     **_staff_fixtures,
     **SERVICES_FIXTURES,
+    **CLIENTS_FIXTURES,
 }
 
 
@@ -198,7 +201,20 @@ SERVICES_PATHS = [
     "/api/v1/leo/services/catalog",
 ]
 
-ALL_PATHS = REVENUE_PATHS + APPOINTMENTS_PATHS + STAFF_STANDARD_PATHS + SERVICES_PATHS
+# ── Clients endpoints (3) ── NEW ──────────────────────────────────────────────
+CLIENTS_PATHS = [
+    "/api/v1/leo/clients/retention-snapshot",
+    "/api/v1/leo/clients/cohort-monthly",
+    "/api/v1/leo/clients/per-location-monthly",
+]
+
+ALL_PATHS = (
+    REVENUE_PATHS
+    + APPOINTMENTS_PATHS
+    + STAFF_STANDARD_PATHS
+    + SERVICES_PATHS
+    + CLIENTS_PATHS
+)
 
 for _path in ALL_PATHS:
     app.add_api_route(_path, _make_handler(_path), methods=["POST"])
@@ -218,12 +234,13 @@ async def health():
     return {
         "status": "ok",
         "mode": "mock",
-        "version": "1.4.0",
+        "version": "1.5.0",
         "endpoints": {
             "revenue":      len(REVENUE_PATHS),
             "appointments": len(APPOINTMENTS_PATHS),
             "staff":        len(STAFF_STANDARD_PATHS) + 1,  # +1 for mode-switched
             "services":     len(SERVICES_PATHS),
+            "clients":      len(CLIENTS_PATHS),
             "total":        len(ALL_PATHS) + 1,
         },
     }
@@ -284,7 +301,7 @@ def start_mock_server() -> MockAnalyticsServer:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting LEO Mock Analytics Server v1.4.0 on http://localhost:8001")
+    print("Starting LEO Mock Analytics Server v1.5.0 on http://localhost:8001")
     print()
     print("Revenue endpoints (6):")
     for p in REVENUE_PATHS:
@@ -300,6 +317,10 @@ if __name__ == "__main__":
     print()
     print("Services endpoints (5):")
     for p in SERVICES_PATHS:
+        print(f"  POST {p}")
+    print()
+    print("Clients endpoints (3):")
+    for p in CLIENTS_PATHS:
         print(f"  POST {p}")
     print()
     print(f"Total: {len(ALL_PATHS) + 1} endpoints")

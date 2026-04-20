@@ -24,6 +24,25 @@ Content-Type: application/json
 }
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ── Mock Analytics Server: 6 revenue + 4 appointments POST + GET /health
 #    uvicorn tests.mocks.mock_analytics_server:app --port 8001
 

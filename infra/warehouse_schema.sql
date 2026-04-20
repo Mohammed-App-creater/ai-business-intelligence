@@ -964,3 +964,181 @@ CREATE TABLE IF NOT EXISTS wh_svc_catalog (
 
 CREATE INDEX IF NOT EXISTS idx_svc_catalog_biz
     ON wh_svc_catalog (business_id);
+
+-- =============================================================================
+-- Clients domain warehouse tables.
+-- 3 tables support the 23 acceptance questions from the Clients sprint.
+--
+-- Key design decisions (from Step 2 + Step 3 specs):
+--   1. wh_client_retention is HISTORICAL (PK includes period) — required for
+--      cohort retention (Option A). Successive period ETL runs stack.
+--   2. No first_name / last_name columns — PII never lands here from the
+--      RAG path. Ops-tools CSV exports use a separate (out of scope) table.
+--   3. is_new_in_period / is_returning_in_period / is_reactivated_in_period
+--      are stored as booleans — can be aggregated by doc generator.
+--   4. days_since_last_visit is numeric (not boolean) — churn threshold
+--      evaluated at doc-generation time per Step 2 risk #4.
+--
+-- Storage profile: ~1000 clients × 24 months × 38 business_ids ≈ 900K rows.
+-- Negligible for Postgres.
+-- =============================================================================
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Table 1 — wh_client_retention (per-client per-period snapshot)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_client_retention (
+    business_id                 INTEGER NOT NULL,
+    client_id                   INTEGER NOT NULL,
+    period                      DATE    NOT NULL,   -- YYYY-MM-01
+
+    -- Demographic (age derived from DOB; DOB not stored)
+    age                         INTEGER,
+    age_bracket                 VARCHAR(16),        -- under_25 | 25_to_40 | 40_to_55 | 55_plus | unknown
+    points                      DOUBLE PRECISION,
+
+    -- Behavioural dates
+    first_visit_ever_date       DATE,
+    last_visit_date             DATE,
+    days_since_last_visit       INTEGER,            -- numeric, threshold applied downstream
+
+    -- Visit counts
+    total_visits_ever           INTEGER DEFAULT 0,
+    visits_in_period            INTEGER DEFAULT 0,
+
+    -- Revenue
+    lifetime_revenue            DOUBLE PRECISION DEFAULT 0,
+    lifetime_tips               DOUBLE PRECISION DEFAULT 0,
+    lifetime_total_paid         DOUBLE PRECISION DEFAULT 0,
+    revenue_in_period           DOUBLE PRECISION DEFAULT 0,
+    avg_ticket                  DOUBLE PRECISION,
+
+    -- Location attribution
+    home_location_id            INTEGER,
+    home_location_name          VARCHAR(100),
+    first_visit_location_id     INTEGER,
+    first_visit_location_name   VARCHAR(100),
+
+    -- Status flags
+    is_not_deleted              BOOLEAN NOT NULL DEFAULT TRUE,
+    is_reachable_email          BOOLEAN NOT NULL DEFAULT FALSE,
+    is_reachable_sms            BOOLEAN NOT NULL DEFAULT FALSE,
+    is_member                   BOOLEAN NOT NULL DEFAULT FALSE,
+    is_new_in_period            BOOLEAN NOT NULL DEFAULT FALSE,
+    is_returning_in_period      BOOLEAN NOT NULL DEFAULT FALSE,
+    is_reactivated_in_period    BOOLEAN NOT NULL DEFAULT FALSE,
+    at_risk_flag                BOOLEAN NOT NULL DEFAULT FALSE,
+
+    -- Ranks (within business, within period)
+    ltv_rank                    INTEGER,
+    frequency_rank              INTEGER,
+    points_rank                 INTEGER,
+    ltv_percentile_decile       INTEGER,            -- 1 = top 10%, 10 = bottom 10%
+
+    etl_run_at                  TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, client_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_client_retention_biz_period
+    ON wh_client_retention (business_id, period);
+CREATE INDEX IF NOT EXISTS idx_wh_client_retention_biz_ltv
+    ON wh_client_retention (business_id, lifetime_revenue DESC);
+CREATE INDEX IF NOT EXISTS idx_wh_client_retention_biz_risk
+    ON wh_client_retention (business_id, at_risk_flag)
+    WHERE at_risk_flag = TRUE;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Table 2 — wh_client_cohort_monthly (per-period aggregate with MoM + retention)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_client_cohort_monthly (
+    business_id                 INTEGER NOT NULL,
+    period                      DATE    NOT NULL,   -- YYYY-MM-01
+
+    -- Counts
+    clients_total               INTEGER DEFAULT 0,
+    new_clients                 INTEGER DEFAULT 0,
+    returning_clients           INTEGER DEFAULT 0,
+    reactivated_clients         INTEGER DEFAULT 0,
+    active_clients_in_period    INTEGER DEFAULT 0,
+    at_risk_clients             INTEGER DEFAULT 0,
+    active_members              INTEGER DEFAULT 0,
+    reachable_email             INTEGER DEFAULT 0,
+    reachable_sms               INTEGER DEFAULT 0,
+
+    -- Revenue
+    total_revenue_in_period     DOUBLE PRECISION DEFAULT 0,
+
+    -- Unique visitors (Q23 dedup)
+    unique_visitors_in_period   INTEGER DEFAULT 0,
+
+    -- MoM lookbacks (from prior period's row)
+    prev_new_clients            INTEGER,
+    prev_at_risk_clients        INTEGER,
+    prev_active_clients         INTEGER,
+
+    -- Derived percentages (NULL when denominator=0)
+    new_clients_mom_pct         DOUBLE PRECISION,
+    at_risk_mom_pct             DOUBLE PRECISION,
+    new_vs_returning_split      DOUBLE PRECISION,
+    retention_rate_pct          DOUBLE PRECISION,   -- cohort retention, Option A
+    churn_rate_pct              DOUBLE PRECISION,
+    member_overlap_pct          DOUBLE PRECISION,
+    top10pct_revenue_share      DOUBLE PRECISION,
+
+    etl_run_at                  TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_client_cohort_biz
+    ON wh_client_cohort_monthly (business_id, period DESC);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Table 3 — wh_client_per_location_monthly (per-location-per-period)
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_client_per_location_monthly (
+    business_id                 INTEGER NOT NULL,
+    period                      DATE    NOT NULL,   -- YYYY-MM-01
+    location_id                 INTEGER NOT NULL,
+    location_name               VARCHAR(100),
+
+    new_clients_here            INTEGER DEFAULT 0,
+    clients_homed_here          INTEGER DEFAULT 0,
+    active_clients_here         INTEGER DEFAULT 0,
+    revenue_here                DOUBLE PRECISION DEFAULT 0,
+
+    rank_by_new_clients         INTEGER,
+    rank_by_active_clients      INTEGER,
+
+    etl_run_at                  TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period, location_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_client_per_loc_biz
+    ON wh_client_per_location_monthly (business_id, period DESC);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Verification query — run after ETL to confirm population
+-- ─────────────────────────────────────────────────────────────────────────────
+--
+-- SELECT
+--     'wh_client_retention'              AS table_name,
+--     COUNT(*)                           AS rows
+-- FROM wh_client_retention WHERE business_id = 42
+-- UNION ALL
+-- SELECT 'wh_client_cohort_monthly',     COUNT(*)
+-- FROM wh_client_cohort_monthly WHERE business_id = 42
+-- UNION ALL
+-- SELECT 'wh_client_per_location_monthly', COUNT(*)
+-- FROM wh_client_per_location_monthly WHERE business_id = 42;
+--
+-- Expected after initial ETL run for biz 42 (based on fixtures):
+--              table_name             | rows
+-- ------------------------------------+------
+--  wh_client_retention                |   38
+--  wh_client_cohort_monthly           |    3
+--  wh_client_per_location_monthly     |    2

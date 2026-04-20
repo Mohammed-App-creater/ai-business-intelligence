@@ -27,6 +27,8 @@ from app.services.doc_generators.domains.staff import generate_staff_docs
 from etl.transforms.staff_etl import StaffExtractor
 from app.services.doc_generators.domains.services import generate_service_docs
 from etl.transforms.services_etl import ServicesExtractor
+from app.services.doc_generators.domains.clients import generate_client_docs
+from etl.transforms.clients_etl import ClientsExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
@@ -653,6 +655,32 @@ class DocGenerator:
         extractor = ServicesExtractor(client=client)
         return await extractor.run(org_id, start_date, end_date)
 
+    async def _fetch_clients_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "retention_snapshot": [],
+                "cohort_monthly":     [],
+                "per_location":       [],
+                "counts":             {},
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = ClientsExtractor(client=client, wh_pool=self._wh._pool)
+        return await extractor.run(
+            business_id=org_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
     async def generate_all(
         self,
         org_id:       int,
@@ -1067,55 +1095,29 @@ class DocGenerator:
     async def _gen_clients(
         self, org_id: int, period_start: date | None, months: int, force: bool
     ) -> tuple[int, int, int]:
-        created = skipped = failed = 0
-        tenant = str(org_id)
-        for ps in self._month_periods(period_start, months):
-            pl = self._period_label(ps)
-            summary = await self._wh.clients.get_retention_summary(org_id)
-            top = await self._wh.clients.get_top_clients_by_spend(org_id, limit=10)
-            if summary:
-                kpi_r = self._kpi_clients_retention(summary, pl)
-                doc_r = f"{org_id}_clients_retention_{self._doc_month_suffix(ps)}"
-                data_r = DocGenData(
-                    business_id=str(org_id),
-                    business_type=self._biz_type,
-                    period=pl,
-                    doc_domain="clients",
-                    doc_type="retention_summary",
-                    kpi_block=kpi_r,
-                )
-                ch = await self._make_chunk_text(org_id, data_r)
-                st = await self._store_doc(
-                    tenant, doc_r, "clients", "retention_summary", ch, ps, {}, force
-                )
-                if st == "created":
-                    created += 1
-                elif st == "skipped":
-                    skipped += 1
-                else:
-                    failed += 1
-            if top:
-                kpi_t = self._kpi_clients_top(top, pl)
-                doc_t = f"{org_id}_clients_top_{self._doc_month_suffix(ps)}"
-                data_t = DocGenData(
-                    business_id=str(org_id),
-                    business_type=self._biz_type,
-                    period=pl,
-                    doc_domain="clients",
-                    doc_type="top_spenders",
-                    kpi_block=kpi_t,
-                )
-                ch2 = await self._make_chunk_text(org_id, data_t)
-                st2 = await self._store_doc(
-                    tenant, doc_t, "clients", "top_spenders", ch2, ps, {}, force
-                )
-                if st2 == "created":
-                    created += 1
-                elif st2 == "skipped":
-                    skipped += 1
-                else:
-                    failed += 1
-        return created, skipped, failed
+        warehouse_rows = await self._fetch_clients_warehouse_rows(
+            org_id, period_start, months
+        )
+        result = await generate_client_docs(
+            org_id=org_id,
+            warehouse_rows=warehouse_rows,
+            embedding_client=self._emb,
+            vector_store=self._vs,
+            force=force,
+        )
+        counts = warehouse_rows.get("counts") or {}
+        self._logger.info(
+            "clients ETL complete for org=%d — snapshot=%d cohort=%d per_loc=%d",
+            org_id,
+            counts.get("retention_snapshot", 0),
+            counts.get("cohort_monthly", 0),
+            counts.get("per_location", 0),
+        )
+        return (
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
+        )
 
     async def _gen_appointments(
         self, org_id: int, period_start: date | None, months: int, force: bool

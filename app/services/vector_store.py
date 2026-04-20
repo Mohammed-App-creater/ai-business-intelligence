@@ -164,7 +164,7 @@ RETURNING id::text
             params.append(doc_type)
             idx += 1
         if since_date is not None:
-            conditions.append(f"period_start >= ${idx}")
+            conditions.append(f"(period_start >= ${idx} OR period_start IS NULL)")
             params.append(since_date)
             idx += 1
         if exclude_rollup:

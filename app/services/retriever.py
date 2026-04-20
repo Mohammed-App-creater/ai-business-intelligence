@@ -56,6 +56,13 @@ _LOCATION_COMPARE_PHRASES: list[str] = [
     "location appointment volume",
     "by location",
     "per location",
+    "between main",
+    "between our",
+    "between the",
+    "vs westside",
+    "vs main",
+    "main st and",
+    "and westside",
 ]
 
 
@@ -269,7 +276,15 @@ class Retriever:
             # Deep single-domain search.
             # Staff domain needs more results — it has 61 docs across 3 types
             # and multi-staff questions need all active staff represented.
-            _top_k = 12 if domains[0] == "staff" else 5
+            # Services domain has 144 docs across 5 types — catalog docs
+            # (lifecycle, dormant, new-this-year) get outscored by monthly
+            # summaries at top_k=5; bump to 10 to capture both.
+            if domains[0] == "staff":
+                _top_k = 12
+            elif domains[0] == "services":
+                _top_k = 10
+            else:
+                _top_k = 5
             return await self._vector_store.search(
                 tenant_id=tenant_id,
                 query_embedding=query_embedding,
