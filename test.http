@@ -20,7 +20,7 @@ Content-Type: application/json
 {
   "org_id": "42",
   "business_id": "42",
-  "question": "Is my revenue trending up or down over the last 6 months?"
+  "question": "Which employee has the highest no-show rate?"
 }
 
 
