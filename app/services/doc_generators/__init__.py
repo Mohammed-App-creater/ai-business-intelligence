@@ -29,12 +29,15 @@ from app.services.doc_generators.domains.services import generate_service_docs
 from etl.transforms.services_etl import ServicesExtractor
 from app.services.doc_generators.domains.clients import generate_client_docs
 from etl.transforms.clients_etl import ClientsExtractor
+from app.services.doc_generators.domains.marketing import generate_marketing_docs
+from etl.transforms.marketing_etl import MarketingExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
     "services":      "_gen_services",
     "clients":       "_gen_clients",
     "appointments":  "_gen_appointments",
+    "marketing":     "_gen_marketing",
     "expenses":      "_gen_expenses",
     "reviews":       "_gen_reviews",
     "payments":      "_gen_payments",
@@ -1112,6 +1115,57 @@ class DocGenerator:
             counts.get("retention_snapshot", 0),
             counts.get("cohort_monthly", 0),
             counts.get("per_location", 0),
+        )
+        return (
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
+        )
+
+    async def _fetch_marketing_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "campaign_summary":  [],
+                "channel_monthly":   [],
+                "promo_attribution": [],
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = MarketingExtractor(client=client, wh_pool=self._wh._pool)
+        return await extractor.run(
+            business_id=org_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    async def _gen_marketing(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        warehouse_rows = await self._fetch_marketing_warehouse_rows(
+            org_id, period_start, months
+        )
+        result = await generate_marketing_docs(
+            org_id=org_id,
+            warehouse_rows=warehouse_rows,
+            embedding_client=self._emb,
+            vector_store=self._vs,
+            force=force,
+        )
+        self._logger.info(
+            "marketing ETL complete for org=%d — campaign=%d channel=%d promo=%d",
+            org_id,
+            len(warehouse_rows.get("campaign_summary")  or []),
+            len(warehouse_rows.get("channel_monthly")   or []),
+            len(warehouse_rows.get("promo_attribution") or []),
         )
         return (
             result["docs_created"],

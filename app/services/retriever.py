@@ -37,13 +37,14 @@ KEYWORD_GROUP_TO_DOMAINS: dict[str, list[str] | None] = {
     "clients":          ["clients"],
     "staff":            ["staff"],
     "services":         ["services"],
-    "marketing":        ["campaigns"],
+    "marketing":        ["marketing", "campaigns"],
     "analytics":        None,   # broad question → search all domains
     "time_comparisons": None,   # modifier, not a domain by itself
 }
 
 ALL_DOMAINS: list[str] = [
     "revenue", "staff", "services", "clients", "appointments",
+    "marketing",
     "expenses", "reviews", "payments", "campaigns",
     "attendance", "subscriptions",
 ]

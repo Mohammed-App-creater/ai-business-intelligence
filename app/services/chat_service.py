@@ -64,6 +64,73 @@ LIVE_DATA_REDIRECT = (
 
 
 # ---------------------------------------------------------------------------
+# PII name-lookup detection — refuse before RAG retrieval
+# ---------------------------------------------------------------------------
+
+_PII_NAME_LOOKUP_PATTERNS: list[re.Pattern[str]] = [
+    # "Tell me about Jane Smith" / "Show me Jane Smith" / "Look up Jane Smith"
+    re.compile(
+        r"\b(?i:tell me about|show me|look up|look at|find|pull up|get me|give me)\s+"
+        r"[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}"
+        r"(?:[.?!]|\s*$)"
+    ),
+
+    # "Jane Smith's visits/spend/history/profile/info/balance/points"
+    re.compile(
+        r"\b[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}'s\s+"
+        r"(?i:spend|spending|visits?|history|profile|contact|info|details|"
+        r"balance|points|total|revenue|appointments?|bookings?)\b"
+    ),
+
+    # "What did Jane Smith spend/buy/visit/book"
+    re.compile(
+        r"\b(?i:what)\s+(?i:did|does|has)\s+[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\s+"
+        r"(?i:spend|spent|buy|book|visit|do|like|prefer)\b"
+    ),
+
+    # "How much/often has Jane Smith ..." / "How many times did Jane Smith ..."
+    re.compile(
+        r"\b(?i:how)\s+(?i:much|often|many\s+times)\s+(?i:has|did|does)\s+"
+        r"[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\b"
+    ),
+
+    # "The client Jane Smith" / "Customer Jane Smith"
+    re.compile(
+        r"\b(?i:the\s+)?(?i:client|customer|patron|guest)\s+"
+        r"[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\b"
+    ),
+
+    # "Jane Smith as a client" / "Jane Smith as a customer"
+    re.compile(
+        r"\b[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}\s+(?i:as\s+a)\s+"
+        r"(?i:client|customer|patron|guest)\b"
+    ),
+]
+
+# Staff-context keywords rescue a name-lookup from PII refusal — let RAG route
+# "Tell me about Maria Lopez my stylist" normally instead of blocking it.
+_STAFF_CONTEXT_KEYWORDS: set[str] = {
+    "staff", "employee", "employees", "stylist", "stylists",
+    "therapist", "therapists", "technician", "technicians",
+    "worker", "workers", "performer", "performers",
+    "team member", "team members", "the team",
+    "my stylist", "my therapist", "my staff",
+    "emp ", "emp_", "empid",
+}
+
+PII_REFUSAL_REDIRECT = (
+    "I don't look up individual people by name — whether a customer or "
+    "a staff member — to protect privacy.\n\n"
+    "I can help you with aggregate questions instead, like:\n"
+    "• Top 10 clients by lifetime spend\n"
+    "• Most frequent customers this month\n"
+    "• At-risk clients we can still reach\n"
+    "• Best-performing staff by revenue\n\n"
+    "What would you like to know?"
+)
+
+
+# ---------------------------------------------------------------------------
 # DIRECT route prompt
 # ---------------------------------------------------------------------------
 
@@ -138,6 +205,14 @@ class ChatService:
             # 2. Check for live-data intent
             if self._has_live_intent(request.question):
                 return self._live_data_response(analysis, t0, request)
+
+            # 2b. Check for personal-name lookup (PII refusal)
+            if self._has_pii_name_lookup(request.question):
+                logger.info(
+                    "chat_service.pii_refusal business_id=%s question=%r",
+                    request.business_id, request.question,
+                )
+                return self._pii_refusal_response(analysis, t0, request)
 
             # 3. Route
             if analysis.route == Route.DIRECT:
@@ -280,6 +355,44 @@ class ChatService:
             answer=LIVE_DATA_REDIRECT,
             route=analysis.route.value if hasattr(analysis.route, "value") else str(analysis.route),
             confidence=analysis.confidence,
+            sources=[],
+            conversation_id=request.conversation_id,
+            latency_ms=latency,
+        )
+
+    # ------------------------------------------------------------------
+    # PII name-lookup detection — refuse before RAG retrieval
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _has_pii_name_lookup(question: str) -> bool:
+        """
+        True if the question looks like a personal-name lookup
+        (e.g. "Tell me about Jane Smith") that should be refused
+        BEFORE reaching the RAG layer.
+
+        Staff-context keywords rescue the query (so "Tell me about
+        Maria Lopez my stylist" is NOT treated as PII).
+        """
+        if not any(p.search(question) for p in _PII_NAME_LOOKUP_PATTERNS):
+            return False
+
+        q_lower = question.lower()
+        if any(kw in q_lower for kw in _STAFF_CONTEXT_KEYWORDS):
+            return False
+
+        return True
+
+    @staticmethod
+    def _pii_refusal_response(
+        analysis: Any, t0: float, request: Any,
+    ) -> ChatResponse:
+        """Return a graceful refusal for personal-name lookups."""
+        latency = (time.perf_counter() - t0) * 1000
+        return ChatResponse(
+            answer=PII_REFUSAL_REDIRECT,
+            route="BLOCKED_PII",
+            confidence=1.0,
             sources=[],
             conversation_id=request.conversation_id,
             latency_ms=latency,

@@ -1142,3 +1142,168 @@ CREATE INDEX IF NOT EXISTS idx_wh_client_per_loc_biz
 --  wh_client_retention                |   38
 --  wh_client_cohort_monthly           |    3
 --  wh_client_per_location_monthly     |    2
+
+
+-- =============================================================================
+-- MARKETING DOMAIN — Sprint 6
+-- =============================================================================
+--
+-- Tables map 1:1 to the Step 2 query specs:
+--   QS1 → wh_mrk_campaign_summary
+--   QS2 → wh_mrk_channel_monthly
+--   QS3 → wh_mrk_promo_attribution_monthly
+--
+-- Naming convention matches prior domains (wh_appt_*, wh_svc_*, wh_client_*).
+-- Primary keys + indexes follow the same (business_id, period) pattern.
+-- =============================================================================
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- wh_mrk_campaign_summary — per-campaign-per-execution KPI rollup
+-- Source: QS1 (Step 2)
+-- Powers: Q1, Q4, Q5–Q14, Q25, Q26, Q31, Q33
+-- One row per (business_id, campaign_id, execution_date).
+-- Campaigns with no executions get one phantom row where execution_date IS NULL
+-- to support the is_expired_but_active workflow-health flag.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wh_mrk_campaign_summary (
+    business_id             BIGINT       NOT NULL,
+    campaign_id             BIGINT       NOT NULL,
+    execution_date          DATE         NULL,       -- NULL = never executed
+    period                  DATE         NULL,       -- first-of-month of execution_date
+    campaign_name           TEXT         NOT NULL,
+    campaign_status         TEXT         NOT NULL,   -- completed/pending/ready
+    is_active               SMALLINT     NOT NULL DEFAULT 0,
+    is_recurring            SMALLINT     NOT NULL DEFAULT 0,
+    channel                 TEXT         NOT NULL,   -- email/mobile/sms/unknown
+    channel_code            SMALLINT     NOT NULL,   -- 1=email, 2=mobile, 3=sms, 0=unknown
+    template_format_name    TEXT         NULL,
+    audience_size           INTEGER      NULL,
+    promo_code_string       TEXT         NULL,
+    campaign_start          DATE         NULL,
+    campaign_expiration     DATE         NULL,
+    total_sent              INTEGER      NOT NULL DEFAULT 0,
+    delivered               INTEGER      NOT NULL DEFAULT 0,
+    failed                  INTEGER      NOT NULL DEFAULT 0,
+    opened                  INTEGER      NOT NULL DEFAULT 0,
+    clicked                 INTEGER      NOT NULL DEFAULT 0,
+    delivery_rate_pct       NUMERIC(5,2) NULL,
+    open_rate_pct           NUMERIC(5,2) NULL,   -- structurally NULL for SMS
+    click_rate_pct          NUMERIC(5,2) NULL,
+    ctr_engagement_pct      NUMERIC(5,2) NULL,
+    is_expired_but_active   SMALLINT     NOT NULL DEFAULT 0,
+    rank_open_in_period     INTEGER      NULL,
+    rank_click_in_period    INTEGER      NULL,
+    rank_reach_in_period    INTEGER      NULL,
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- Expression-based unique index serves as the logical PK. PostgreSQL doesn't
+-- allow expressions inside a PRIMARY KEY constraint, but a unique index on
+-- COALESCE(execution_date, DATE '1900-01-01') works and matches the loader's
+-- ON CONFLICT clause for upserts of phantom (never-executed) rows.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_wh_mrk_cs_identity
+    ON wh_mrk_campaign_summary (
+        business_id, campaign_id, COALESCE(execution_date, DATE '1900-01-01')
+    );
+
+CREATE INDEX IF NOT EXISTS idx_wh_mrk_cs_bp
+    ON wh_mrk_campaign_summary (business_id, period);
+
+CREATE INDEX IF NOT EXISTS idx_wh_mrk_cs_bch
+    ON wh_mrk_campaign_summary (business_id, channel, period);
+
+-- Partial index: fast lookup of expired-but-active workflow issues (Q4)
+CREATE INDEX IF NOT EXISTS idx_wh_mrk_cs_expired
+    ON wh_mrk_campaign_summary (business_id)
+    WHERE is_expired_but_active = 1;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- wh_mrk_channel_monthly — per-period rollup fusing 3 data streams
+-- Source: QS2 (Step 2)
+-- Powers: Q2, Q3, Q19–Q24, Q27, Q28, Q32, Q34
+-- One row per (business_id, period).
+-- Per DD2: unsubscribe_* columns store point-in-time snapshots written at
+-- ETL run. Historical values for prior periods stay in earlier rows —
+-- closed periods are never overwritten.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wh_mrk_channel_monthly (
+    business_id                 BIGINT       NOT NULL,
+    period                      DATE         NOT NULL,   -- first-of-month
+
+    -- Volume (from tbl_smsemailcount)
+    emails_sent                 INTEGER      NOT NULL DEFAULT 0,
+    sms_sent                    INTEGER      NOT NULL DEFAULT 0,
+    prev_emails_sent            INTEGER      NULL,
+    prev_sms_sent               INTEGER      NULL,
+    emails_mom_pct              NUMERIC(8,2) NULL,
+    sms_mom_pct                 NUMERIC(8,2) NULL,
+
+    -- Campaign performance aggregated by channel
+    email_campaigns_run         INTEGER      NULL,
+    email_open_rate_pct         NUMERIC(5,2) NULL,
+    email_click_rate_pct        NUMERIC(5,2) NULL,
+    sms_campaigns_run           INTEGER      NULL,
+    sms_open_rate_pct           NUMERIC(5,2) NULL,   -- structurally NULL
+    sms_click_rate_pct          NUMERIC(5,2) NULL,
+
+    -- Unsubscribe snapshot at period end
+    email_unsubscribed_count    INTEGER      NULL,
+    sms_unsubscribed_count      INTEGER      NULL,
+    total_contacts              INTEGER      NULL,
+    email_contactable           INTEGER      NULL,
+    sms_contactable             INTEGER      NULL,
+
+    -- Derived (computed at ETL write from current vs prior stored period)
+    email_net_unsub_delta       INTEGER      NULL,
+    sms_net_unsub_delta         INTEGER      NULL,
+    email_contactable_mom_pct   NUMERIC(8,2) NULL,
+
+    updated_at                  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_mrk_cm_bp
+    ON wh_mrk_channel_monthly (business_id, period);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- wh_mrk_promo_attribution_monthly — campaign revenue attribution
+-- Source: QS3 (Step 2)
+-- Powers: Q15–Q18, Q29, Q30
+-- One row per (business_id, campaign_id, period, location_id).
+-- Double tenant bind (DD4) enforced at query level — see QS3 SQL.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wh_mrk_promo_attribution_monthly (
+    business_id                 BIGINT        NOT NULL,
+    campaign_id                 BIGINT        NOT NULL,
+    period                      DATE          NOT NULL,   -- first-of-month
+    location_id                 BIGINT        NOT NULL,
+    campaign_name               TEXT          NOT NULL,
+    promo_code_string           TEXT          NOT NULL,
+    audience_size               INTEGER       NULL,
+    redemptions                 INTEGER       NOT NULL DEFAULT 0,
+    attributed_revenue          NUMERIC(18,2) NOT NULL DEFAULT 0,
+    total_discount_given        NUMERIC(18,2) NOT NULL DEFAULT 0,
+    net_revenue_after_discount  NUMERIC(18,2) NOT NULL DEFAULT 0,
+    revenue_per_send            NUMERIC(18,4) NULL,
+    conversion_rate_pct         NUMERIC(8,4)  NULL,
+    rank_in_period              INTEGER       NULL,
+    rank_in_location_period     INTEGER       NULL,
+    updated_at                  TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, campaign_id, period, location_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_mrk_pa_bp
+    ON wh_mrk_promo_attribution_monthly (business_id, period);
+
+CREATE INDEX IF NOT EXISTS idx_wh_mrk_pa_bl
+    ON wh_mrk_promo_attribution_monthly (business_id, period, location_id);
+
+-- End of Marketing Domain warehouse schema additions.

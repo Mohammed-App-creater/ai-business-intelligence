@@ -186,9 +186,90 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "rescheduled", "rescheduling", "rebook", "rebooking",
     ],
     "clients": [
-        "client", "clients", "customer", "customers", "retention",
-        "repeat client", "new client", "churn", "loyalty", "returning",
-        "acquisition", "lost client", "inactive",
+        # ── Core client vocabulary ─────────────────────────────────────────
+        "client", "clients", "customer", "customers",
+        "patron", "patrons", "guest", "guests",
+        "client base", "customer base", "client roster",
+        "on file", "on our books",
+
+        # ── Counts & status (Q1, Q2, Q3, Q17) ──────────────────────────────
+        "total clients", "total customers", "total customer count",
+        "clients ever", "customers ever", "all time clients", "all-time clients",
+        "how many clients", "how many customers",
+        "active clients", "active customers",
+        "new client", "new clients", "new customer", "new customers",
+        "returning clients", "returning customers",
+        "first-time", "first time", "first-time client",
+
+        # ── Acquisition (Q2, Q4, Q10, Q20) ─────────────────────────────────
+        "acquisition", "client acquisition", "customer acquisition",
+        "acquired", "new client acquisition",
+        "new client drop", "fewer new clients",
+        "new clients this month", "new clients last month",
+
+        # ── LTV / top spenders (Q7, Q19) ───────────────────────────────────
+        "lifetime value", "lifetime spend", "lifetime revenue", "LTV", "ltv",
+        "biggest spenders", "top spenders", "best customers", "best clients",
+        "big spenders", "high value clients", "high-value clients",
+        "top 10 clients", "top clients", "VIP", "VIPs", "whales",
+        "regulars", "loyal clients",
+        "top 10 percent", "top 10%", "top tier",
+        "revenue concentration",
+
+        # ── Frequency & visits (Q8, Q23) ───────────────────────────────────
+        "most frequent", "most frequent clients", "most visits",
+        "frequent visitors", "top visitors",
+        "unique clients", "unique customers", "unique visitors",
+        "unique people", "different customers", "different clients",
+        "distinct clients", "distinct customers",
+        "how many people", "how many different",
+        "walk-in", "walk in", "walkin", "walk-ins",
+
+        # ── Points / rewards (Q9) ──────────────────────────────────────────
+        "loyalty points", "points", "rewards", "rewards points",
+        "points balance", "reward balance", "loyalty balance",
+        "top points holders", "most points",
+
+        # ── Churn, retention, at-risk (Q5, Q11, Q12) ───────────────────────
+        "retention", "retention rate", "cohort retention", "return rate",
+        "churn", "churn rate", "churning",
+        "at risk", "at-risk", "at-risk clients", "risk of churning",
+        "haven't seen", "haven't been back", "hasn't been back",
+        "gone quiet", "lost interest",
+        "dormant client", "dormant customer", "inactive client",
+        "lost client", "lost customer", "losing clients",
+        "about to churn",
+
+        # ── Reactivation / win-back (Q6, Q14) ──────────────────────────────
+        "reactivated", "reactivation", "reactivate",
+        "came back", "came back after", "returned after",
+        "win back", "win-back", "winback", "won back",
+        "reach out", "email outreach", "outreach campaign",
+
+        # ── Reachability (Q18) ─────────────────────────────────────────────
+        "reachable", "contactable", "can we email", "can we text",
+        "unsubscribed", "opted out", "opt-out",
+        "email list", "SMS list", "email-able",
+
+        # ── Mix / composition (Q16, Q21, Q22) ──────────────────────────────
+        "new vs returning", "new versus returning", "new and returning",
+        "age distribution", "age breakdown", "age bracket",
+        "demographics", "client demographics", "customer demographics",
+        "age of new clients", "new client age",
+        "member", "members", "membership status", "active members",
+        "how many members", "member overlap",
+
+        # ── Advice (Q15) ───────────────────────────────────────────────────
+        "improve retention", "retain more clients", "keep clients",
+        "retention advice", "stop the churn",
+
+        # ── Per-location (Q20) ─────────────────────────────────────────────
+        "which branch new", "which location new", "new clients by location",
+        "new clients by branch", "location acquisition",
+
+        # ── MoM language (Q4, Q10) ─────────────────────────────────────────
+        "client drop", "customer drop", "new client change",
+        "acquisition dropped", "acquisition fell",
     ],
     "staff": [
         # Core staff vocabulary
@@ -282,8 +363,92 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "year over year", "yoy", "period",
     ],
     "marketing": [
-        "campaign", "campaigns", "marketing", "promotion", "promotions",
-        "conversion", "impressions", "ad spend", "roi",
+        # ── Core campaign vocabulary ────────────────────────────────────────
+        "campaign", "campaigns", "marketing", "blast", "blasts",
+        "send", "sends", "sent", "send volume",
+        "promotion", "promotions", "promo", "promo code",
+
+        # ── Channel — Email ─────────────────────────────────────────────────
+        "email", "emails", "email campaign", "email campaigns",
+        "email marketing", "email blast", "newsletter",
+        "email volume", "email send", "emails sent",
+        "email open", "email click", "email performance",
+
+        # ── Channel — SMS / Mobile ──────────────────────────────────────────
+        "sms", "sms campaign", "sms campaigns", "text", "texts",
+        "text message", "text messages", "text blast",
+        "sms volume", "mobile",
+        "sms vs email", "email vs sms",
+
+        # ── Performance KPIs (Q5–Q13, Q19, Q20, Q33) ────────────────────────
+        "open rate", "open rates", "opens", "opened",
+        "click rate", "click rates", "clicks", "clicked",
+        "click through", "click-through", "ctr",
+        "delivery rate", "delivery success",
+        "delivered", "deliverability",
+        "failed", "fail rate", "failure rate",
+        "bounced", "bounce rate",
+        "reach", "reached", "reach rate",
+        "audience", "audience size",
+        "engagement", "engagement rate",
+
+        # ── Unsubscribes / list health (Q27, Q28, Q34) ──────────────────────
+        "unsubscribe", "unsubscribes", "unsubscribed", "unsub",
+        "opt out", "opt-out", "opted out",
+        "contactable", "email-contactable", "email list",
+        "sms list", "marketing list", "contact list",
+        "list health", "list growth", "list shrinking",
+        "list fatigue", "over sending", "over-sending",
+        "too many emails", "sending too much",
+        "to my customers", "to customers", "sending to customers",
+        "email my customers", "text my customers",
+
+        # ── ROI / Attribution (Q15–Q18, Q30) ────────────────────────────────
+        "revenue from campaign", "campaign revenue",
+        "attributed revenue", "promo revenue",
+        "redeemed", "redemption", "redemptions",
+        "pay for itself", "paid off",
+        "revenue per send", "revenue per campaign",
+        "campaign cost", "promo cost",
+        "conversion", "conversions", "conversion rate",
+        "impressions", "ad spend", "roi",
+
+        # ── Rankings (Q10, Q11, Q12, Q13, Q14) ──────────────────────────────
+        "best campaign", "best-performing campaign",
+        "best performing campaign", "top campaign", "top-performing",
+        "worst campaign", "worst-performing",
+        "highest open rate", "highest click rate",
+        "lowest open rate", "most opens", "most clicks",
+        "most redeemed", "most redemptions", "most-redeemed",
+
+        # ── Recurring / templates (Q14, Q25, Q26) ───────────────────────────
+        "recurring campaign", "recurring campaigns",
+        "welcome series", "drip campaign",
+        "automated campaign", "triggered campaign",
+        "still performing", "last run",
+        "template", "templates", "template format",
+        "campaign format", "email format",
+
+        # ── Trend language (Q19, Q20, Q21, Q22) ─────────────────────────────
+        "open rates going up", "open rates going down",
+        "click rates improving", "click rate improving",
+        "open rate trend", "click rate trend",
+        "engagement trend", "send volume trend",
+
+        # ── Branch / location (Q29, Q30) ────────────────────────────────────
+        "campaign by location", "location campaigns",
+        "branch campaigns", "campaigns per branch",
+        "promo redemptions by location", "promo by branch",
+
+        # ── Day-of-week (Q33) ───────────────────────────────────────────────
+        "day of the week", "best day to send", "best send day",
+        "weekday performance",
+
+        # ── Advice (Q31, Q32) ───────────────────────────────────────────────
+        "improve open rates", "improve click rates",
+        "boost open rates", "increase engagement",
+        "underperform", "underperformed",
+        "why did my campaign", "what went wrong with campaign",
     ],
     "analytics": [
         "report", "reports", "analytics", "analysis", "breakdown",

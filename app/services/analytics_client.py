@@ -88,8 +88,8 @@ class AnalyticsClient:
     Sprint 2  — appointments ✅
     Sprint 3  — staff        ✅
     Sprint 4  — services     ✅
-    Sprint 5  — clients      ⬜
-    Sprint 6  — marketing    ⬜
+    Sprint 5  — clients      ✅
+    Sprint 6  — marketing    ✅
     Sprint 7  — memberships  ⬜
     Sprint 8  — giftcards    ⬜
     Sprint 9  — promos       ⬜
@@ -820,6 +820,136 @@ class AnalyticsClient:
             payload["location_id"] = location_id
         body = await self._post_full(
             "/api/v1/leo/clients/per-location-monthly",
+            payload,
+        )
+        return body.get("data", [])
+
+    # ── MARKETING DOMAIN ──────────────────────────────────────────────────────
+    # 3 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 6 — marketing
+
+    async def get_marketing_campaign_summary(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        channel: Optional[str] = None,
+        recurring_only: bool = False,
+        include_inactive: bool = False,
+    ) -> list[dict]:
+        """
+        EP1 — Per-campaign-per-execution performance rollup.
+
+        Returns one row per (campaign × execution_date) with rates,
+        ranks, and the is_expired_but_active workflow-health flag.
+        Campaigns with no executions still appear (execution_date=None)
+        so the caller can detect expired-but-active workflow issues.
+
+        Powers Q1, Q4, Q5–Q14, Q25, Q26, Q31, Q33 of the Marketing domain.
+
+        Parameters
+        ----------
+        business_id : int
+            Tenant scope. Validated against X-API-Key on the backend.
+        start_date, end_date : date
+            Filter on execution_date. ISO YYYY-MM-DD.
+        channel : Optional[str]
+            Filter by channel: "email" | "mobile" | "sms". None = all.
+        recurring_only : bool
+            If True, only return campaigns where is_recurring = 1.
+        include_inactive : bool
+            Default False. If True, include campaigns with is_active = 0.
+        """
+        payload: dict = {
+            "business_id":      business_id,
+            "period_start":     start_date.isoformat(),
+            "period_end":       end_date.isoformat(),
+            "recurring_only":   recurring_only,
+            "include_inactive": include_inactive,
+        }
+        if channel is not None:
+            payload["channel"] = channel
+
+        body = await self._post_full(
+            "/api/v1/leo/marketing/campaign-summary",
+            payload,
+        )
+        return body.get("data", [])
+
+    async def get_marketing_channel_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP2 — Per-period rollup fusing email/SMS volume, perf, and unsubscribe snapshot.
+
+        Returns one row per period. Combines three data streams:
+          - Send volume (emails_sent, sms_sent from tbl_smsemailcount)
+          - Campaign performance aggregated by channel
+          - Unsubscribe snapshot (email/sms_unsubscribed_count, contactable counts)
+          - Derived deltas (email_net_unsub_delta, contactable_mom_pct)
+
+        NOTE: sms_open_rate_pct is structurally NULL — SMS has no open tracking.
+        AI prompt must render NULL as "no data", not as "0%".
+
+        Powers Q2, Q3, Q19–Q24, Q27, Q28, Q32, Q34.
+        """
+        payload: dict = {
+            "business_id":  business_id,
+            "period_start": start_date.isoformat(),
+            "period_end":   end_date.isoformat(),
+        }
+        body = await self._post_full(
+            "/api/v1/leo/marketing/channel-monthly",
+            payload,
+        )
+        return body.get("data", [])
+
+    async def get_marketing_promo_attribution_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        location_id: Optional[int] = None,
+        campaign_id: Optional[int] = None,
+    ) -> list[dict]:
+        """
+        EP3 — Campaign revenue attribution per (campaign, period, location).
+
+        Links a campaign's promo code to actual paid visits via the 3-hop chain:
+            campaign.PromoCode (varchar)
+              → tbl_promo.PromoCode (varchar match)
+              → tbl_promo.Id (int)
+              → tbl_visit.PromoCode (int FK)
+
+        DOUBLE TENANT BIND (Step 2 DD4): backend enforces filters on BOTH
+        campaign.TenantID AND visit.OrganizationId because tbl_promo has no
+        OrganizationId column. Removing either filter is a tenant-isolation
+        violation — do not override on the AI side.
+
+        Powers Q15–Q18, Q29, Q30.
+
+        Parameters
+        ----------
+        location_id : Optional[int]
+            Filter to a single branch. None = all locations.
+        campaign_id : Optional[int]
+            Filter to a single campaign. None = all campaigns.
+        """
+        payload: dict = {
+            "business_id":  business_id,
+            "period_start": start_date.isoformat(),
+            "period_end":   end_date.isoformat(),
+        }
+        if location_id is not None:
+            payload["location_id"] = location_id
+        if campaign_id is not None:
+            payload["campaign_id"] = campaign_id
+
+        body = await self._post_full(
+            "/api/v1/leo/marketing/promo-attribution-monthly",
             payload,
         )
         return body.get("data", [])
