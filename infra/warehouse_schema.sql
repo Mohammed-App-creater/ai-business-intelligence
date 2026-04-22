@@ -1307,3 +1307,419 @@ CREATE INDEX IF NOT EXISTS idx_wh_mrk_pa_bl
     ON wh_mrk_promo_attribution_monthly (business_id, period, location_id);
 
 -- End of Marketing Domain warehouse schema additions.
+
+
+-- =============================================================================
+-- APPEND TO: infra/warehouse_schema.sql
+-- =============================================================================
+-- Expenses domain warehouse tables (7 total).
+--
+-- Paste this block at the end of warehouse_schema.sql, AFTER the marketing
+-- tables (wh_mrk_*) and BEFORE any trailing wh_etl_log / wh_embedding_log
+-- tables. Order matters only for readability — there are no cross-table
+-- FKs here, each table is self-contained on (business_id, period, ...).
+--
+-- Sprint: Domain 7 of 11 (Expenses)
+-- Step: 4 of 8 (ETL wire-up)
+-- Matches: etl/transforms/expenses_etl.py upserts
+-- Source of truth: Step 2 query spec v2 + Step 3 API spec v2
+-- =============================================================================
+
+-- ── 1. wh_exp_monthly_summary ────────────────────────────────────────────────
+-- One row per (business_id × period). Feeds EP1 / Query 1.
+-- NULL-tolerant on quarter and MoM fields per API spec.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS wh_exp_monthly_summary (
+    business_id              INTEGER      NOT NULL,
+    period                   DATE         NOT NULL,         -- first-of-month
+
+    total_expenses           NUMERIC(14,2) NOT NULL DEFAULT 0,
+    transaction_count        INTEGER       NOT NULL DEFAULT 0,
+    avg_transaction          NUMERIC(14,2) NOT NULL DEFAULT 0,
+    min_transaction          NUMERIC(14,2) NOT NULL DEFAULT 0,
+    max_transaction          NUMERIC(14,2) NOT NULL DEFAULT 0,
+
+    prev_month_expenses      NUMERIC(14,2),                 -- NULL for first month
+    mom_change_pct           NUMERIC(8,2),                  -- NULL for first month
+    mom_direction            TEXT,                          -- 'up'|'down'|'flat'|NULL
+
+    ytd_total                NUMERIC(14,2) NOT NULL DEFAULT 0,   -- calendar-year YTD
+    window_cumulative        NUMERIC(14,2) NOT NULL DEFAULT 0,   -- running sum over window
+
+    current_quarter_total    NUMERIC(14,2),                 -- NULL if incomplete quarter
+    prev_quarter_total       NUMERIC(14,2),                 -- NULL if insufficient data
+    qoq_change_pct           NUMERIC(8,2),                  -- NULL if either quarter incomplete
+
+    expense_rank_in_window   INTEGER      NOT NULL DEFAULT 0, -- 1 = highest-spend month
+    avg_monthly_in_window    NUMERIC(14,2) NOT NULL DEFAULT 0,
+    months_in_window         INTEGER      NOT NULL DEFAULT 0,
+
+    large_txn_count          INTEGER      NOT NULL DEFAULT 0, -- txns > $100K (outlier flag)
+    huge_txn_count           INTEGER      NOT NULL DEFAULT 0, -- txns > $1M (entry error flag)
+
+    updated_at               TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_monthly_summary_period
+    ON wh_exp_monthly_summary (period);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_monthly_summary_business
+    ON wh_exp_monthly_summary (business_id, period DESC);
+
+
+-- ── 2. wh_exp_category_breakdown ─────────────────────────────────────────────
+-- One row per (business_id × period × category). Feeds EP2 / Query 2.
+-- Dormant categories are ABSENT from rows — doc layer derives them.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS wh_exp_category_breakdown (
+    business_id                INTEGER      NOT NULL,
+    period                     DATE         NOT NULL,
+    category_id                INTEGER      NOT NULL,
+    category_name              TEXT         NOT NULL DEFAULT 'Uncategorized',
+
+    category_total             NUMERIC(14,2) NOT NULL DEFAULT 0,
+    transaction_count          INTEGER       NOT NULL DEFAULT 0,
+    month_total                NUMERIC(14,2) NOT NULL DEFAULT 0,
+    pct_of_month               NUMERIC(8,2)  NOT NULL DEFAULT 0,
+    rank_in_month              INTEGER       NOT NULL DEFAULT 0,
+
+    prev_month_total           NUMERIC(14,2),                 -- NULL if no prior month
+    mom_change_pct             NUMERIC(8,2),
+
+    baseline_3mo_avg           NUMERIC(14,2),                 -- NULL if < 2 months of prior history
+    baseline_months_available  INTEGER      NOT NULL DEFAULT 0,
+    pct_vs_baseline            NUMERIC(8,2),                  -- NULL when baseline insufficient
+    anomaly_flag               TEXT,                          -- 'spike'|'elevated'|'normal'|'low'|'unusual_low'|NULL
+
+    updated_at                 TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period, category_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_category_bd_period
+    ON wh_exp_category_breakdown (period);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_category_bd_business
+    ON wh_exp_category_breakdown (business_id, period DESC);
+
+-- Supports Q24-style "spending more than usual" queries directly from SQL
+-- if ever needed (the AI layer primarily uses anomaly_flag in RAG chunks).
+CREATE INDEX IF NOT EXISTS idx_wh_exp_category_bd_anomaly
+    ON wh_exp_category_breakdown (business_id, anomaly_flag, period DESC)
+    WHERE anomaly_flag IS NOT NULL;
+
+
+-- ── 3. wh_exp_subcategory_breakdown ──────────────────────────────────────────
+-- One row per (business_id × period × category × subcategory).
+-- Only populated when the ETL fetches with include_subcategories=True.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS wh_exp_subcategory_breakdown (
+    business_id         INTEGER      NOT NULL,
+    period              DATE         NOT NULL,
+    category_id         INTEGER      NOT NULL,
+    category_name       TEXT         NOT NULL DEFAULT 'Uncategorized',
+    subcategory_id      INTEGER      NOT NULL,
+    subcategory_name    TEXT         NOT NULL DEFAULT 'Unspecified',
+
+    subcategory_total   NUMERIC(14,2) NOT NULL DEFAULT 0,
+    transaction_count   INTEGER       NOT NULL DEFAULT 0,
+    rank_in_category    INTEGER       NOT NULL DEFAULT 0,
+
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period, category_id, subcategory_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_subcategory_bd_business
+    ON wh_exp_subcategory_breakdown (business_id, period DESC, category_id);
+
+
+-- ── 4. wh_exp_location_breakdown ─────────────────────────────────────────────
+-- One row per (business_id × period × location). Per-location only; rollup
+-- lives in wh_exp_monthly_summary (rollup-vs-per-location retrieval hygiene).
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS wh_exp_location_breakdown (
+    business_id         INTEGER      NOT NULL,
+    period              DATE         NOT NULL,
+    location_id         INTEGER      NOT NULL,
+    location_name       TEXT         NOT NULL DEFAULT 'Unknown',
+
+    location_total      NUMERIC(14,2) NOT NULL DEFAULT 0,
+    transaction_count   INTEGER       NOT NULL DEFAULT 0,
+    month_total         NUMERIC(14,2) NOT NULL DEFAULT 0,
+    pct_of_month        NUMERIC(8,2)  NOT NULL DEFAULT 0,
+    rank_in_month       INTEGER       NOT NULL DEFAULT 0,
+
+    prev_month_total    NUMERIC(14,2),
+    mom_change_pct      NUMERIC(8,2),
+
+    updated_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period, location_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_location_bd_business
+    ON wh_exp_location_breakdown (business_id, period DESC);
+
+
+-- ── 5. wh_exp_payment_type_breakdown ─────────────────────────────────────────
+-- One row per (business_id × period × payment_type_code).
+-- PaymentType enum confirmed 2026-04-21: 1=Cash, 2=Check, 3=Card.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS wh_exp_payment_type_breakdown (
+    business_id           INTEGER      NOT NULL,
+    period                DATE         NOT NULL,
+    payment_type_code     INTEGER      NOT NULL,
+    payment_type_label    TEXT         NOT NULL,            -- 'Cash'|'Check'|'Card'|'Type N'
+
+    type_total            NUMERIC(14,2) NOT NULL DEFAULT 0,
+    transaction_count     INTEGER       NOT NULL DEFAULT 0,
+    month_total           NUMERIC(14,2) NOT NULL DEFAULT 0,
+    pct_of_month          NUMERIC(8,2)  NOT NULL DEFAULT 0,
+
+    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period, payment_type_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_payment_bd_business
+    ON wh_exp_payment_type_breakdown (business_id, period DESC);
+
+
+-- ── 6. wh_exp_staff_attribution ──────────────────────────────────────────────
+-- One row per (business_id × period × employee). PII-hardened: k-anonymity
+-- (>=3 entries) is enforced at the query level, so rows with <3 entries
+-- NEVER appear here. total_amount_logged is stored but NOT embedded in
+-- RAG chunks by the doc generator.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS wh_exp_staff_attribution (
+    business_id          INTEGER      NOT NULL,
+    period               DATE         NOT NULL,
+    employee_id          INTEGER      NOT NULL,
+    employee_name        TEXT         NOT NULL DEFAULT 'Unknown',
+
+    entries_logged       INTEGER       NOT NULL DEFAULT 0,  -- always >= 3 (k-anonymity)
+    total_amount_logged  NUMERIC(14,2) NOT NULL DEFAULT 0,  -- NOT embedded in AI docs
+    rank_in_month        INTEGER       NOT NULL DEFAULT 0,
+
+    updated_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period, employee_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_staff_attr_business
+    ON wh_exp_staff_attribution (business_id, period DESC);
+
+
+-- ── 7. wh_exp_category_location_cross ────────────────────────────────────────
+-- One row per (business_id × period × location × category). Heaviest table
+-- by volume — can reach ~450 rows/tenant for multi-location, many-category,
+-- 6-month windows.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS wh_exp_category_location_cross (
+    business_id             INTEGER      NOT NULL,
+    period                  DATE         NOT NULL,
+    location_id             INTEGER      NOT NULL,
+    location_name           TEXT         NOT NULL DEFAULT 'Unknown',
+    category_id             INTEGER      NOT NULL,
+    category_name           TEXT         NOT NULL DEFAULT 'Uncategorized',
+
+    cross_total             NUMERIC(14,2) NOT NULL DEFAULT 0,
+    transaction_count       INTEGER       NOT NULL DEFAULT 0,
+    pct_of_location_month   NUMERIC(8,2)  NOT NULL DEFAULT 0,
+    rank_in_location_month  INTEGER       NOT NULL DEFAULT 0,
+
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, period, location_id, category_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_exp_cat_loc_cross_business
+    ON wh_exp_category_location_cross (business_id, period DESC, location_id);
+
+
+-- =============================================================================
+-- END EXPENSES DOMAIN TABLES
+-- =============================================================================
+-- Verification query after deployment (7 tables, 0 rows initially):
+--
+--   SELECT table_name,
+--          (SELECT count(*) FROM information_schema.columns
+--           WHERE table_name = t.table_name) AS columns
+--   FROM information_schema.tables t
+--   WHERE table_name LIKE 'wh_exp_%'
+--   ORDER BY table_name;
+--
+-- Expected result:
+--   wh_exp_category_breakdown          | 15
+--   wh_exp_category_location_cross     | 11
+--   wh_exp_location_breakdown          | 12
+--   wh_exp_monthly_summary             | 21
+--   wh_exp_payment_type_breakdown      |  9
+--   wh_exp_staff_attribution           |  8
+--   wh_exp_subcategory_breakdown       | 10
+-- =============================================================================
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- Migration: 2026_04_22_promos_warehouse.sql
+-- Domain:    Promos (Domain 8)
+-- Purpose:   Warehouse tables to land promo redemption data extracted from
+--            the analytics backend. Read by doc_generator.promos.py to
+--            produce 6 chunk types for embedding into pgvector.
+-- ═══════════════════════════════════════════════════════════════════════════════
+--
+-- Conventions inherited from prior domain migrations:
+--   • business_id column on every table (tenant isolation enforced at write+read)
+--   • period_start as DATE column, NULLABLE for catalog-style rows (Lesson 3)
+--   • All currency as NUMERIC(20, 2) — matches API spec types
+--   • Composite indexes on (business_id, period_start) for query performance
+--   • generated_at TIMESTAMP for staleness checks
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+
+-- ── 1. wh_promo_monthly ───────────────────────────────────────────────────────
+-- Powers: promo_monthly_summary chunks (rollup, location_id=0)
+-- Source: EP1 /api/v1/leo/promos/monthly
+
+CREATE TABLE IF NOT EXISTS wh_promo_monthly (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    period_start                    DATE            NOT NULL,
+    total_visits                    INTEGER         NOT NULL DEFAULT 0,
+    promo_redemptions               INTEGER         NOT NULL DEFAULT 0,
+    distinct_codes_used             INTEGER         NOT NULL DEFAULT 0,
+    promo_visit_pct                 NUMERIC(5, 2)   NOT NULL DEFAULT 0,
+    total_discount_given            NUMERIC(20, 2)  NOT NULL DEFAULT 0,
+    avg_discount_per_redemption     NUMERIC(10, 2),
+    prev_month_redemptions          INTEGER,
+    prev_month_discount             NUMERIC(20, 2),
+    generated_at                    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (business_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_promo_monthly_biz_period
+    ON wh_promo_monthly (business_id, period_start DESC);
+
+
+-- ── 2. wh_promo_codes ─────────────────────────────────────────────────────────
+-- Powers: promo_code_monthly + promo_code_window_total chunks
+-- Source: EP2 /api/v1/leo/promos/codes (both granularities)
+--
+-- period_start IS NULL → window-total row (Lesson 3 — catalog-style with NULL period)
+-- period_start IS NOT NULL → monthly per-code row
+-- promo_code_string + promo_label NULLABLE for orphan handling (Lesson per N1)
+
+CREATE TABLE IF NOT EXISTS wh_promo_codes (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    period_start                    DATE,           -- NULL for window-total rows
+    promo_id                        INTEGER         NOT NULL,
+    promo_code_string               VARCHAR(20),    -- NULL for orphans
+    promo_label                     VARCHAR(150),   -- NULL when Desc empty
+    promo_amount_metadata           NUMERIC(20, 2), -- NULL for orphans
+    is_active                       SMALLINT,
+    expiration_date                 DATE,
+    redemptions                     INTEGER         NOT NULL DEFAULT 0,
+    total_discount                  NUMERIC(20, 2)  NOT NULL DEFAULT 0,
+    avg_discount                    NUMERIC(10, 2),
+    max_single_discount             NUMERIC(10, 2),
+    is_expired_now                  SMALLINT,       -- only set on window-total rows
+    generated_at                    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Composite uniqueness allows both monthly + window-total rows for same code
+    -- by treating NULL period as distinct via COALESCE
+    UNIQUE (business_id, promo_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_promo_codes_biz_period
+    ON wh_promo_codes (business_id, period_start DESC NULLS LAST);
+
+CREATE INDEX IF NOT EXISTS idx_wh_promo_codes_biz_promo
+    ON wh_promo_codes (business_id, promo_id);
+
+
+-- ── 3. wh_promo_locations ─────────────────────────────────────────────────────
+-- Powers: promo_location_rollup chunks (per-location aggregate)
+-- Source: EP3 /api/v1/leo/promos/locations?shape=rollup
+--
+-- The by_code shape feeds wh_promo_location_codes (separate table below).
+
+CREATE TABLE IF NOT EXISTS wh_promo_locations (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    period_start                    DATE            NOT NULL,
+    location_id                     INTEGER         NOT NULL,
+    location_name                   VARCHAR(255),   -- NULL allowed if location deleted
+    total_promo_redemptions         INTEGER         NOT NULL DEFAULT 0,
+    distinct_codes_used             INTEGER         NOT NULL DEFAULT 0,
+    total_discount_given            NUMERIC(20, 2)  NOT NULL DEFAULT 0,
+    avg_discount_per_redemption     NUMERIC(10, 2),
+    generated_at                    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (business_id, period_start, location_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_promo_locations_biz_period
+    ON wh_promo_locations (business_id, period_start DESC);
+
+
+-- ── 4. wh_promo_location_codes ────────────────────────────────────────────────
+-- Powers: promo_location_monthly chunks (per-code per-location detail)
+-- Source: EP3 /api/v1/leo/promos/locations?shape=by_code
+
+CREATE TABLE IF NOT EXISTS wh_promo_location_codes (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    period_start                    DATE            NOT NULL,
+    location_id                     INTEGER         NOT NULL,
+    location_name                   VARCHAR(255),
+    promo_id                        INTEGER         NOT NULL,
+    promo_code_string               VARCHAR(20),    -- NULL for orphans
+    promo_label                     VARCHAR(150),
+    redemptions                     INTEGER         NOT NULL DEFAULT 0,
+    total_discount                  NUMERIC(20, 2)  NOT NULL DEFAULT 0,
+    avg_discount                    NUMERIC(10, 2),
+    generated_at                    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (business_id, period_start, location_id, promo_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_promo_location_codes_biz_period
+    ON wh_promo_location_codes (business_id, period_start DESC);
+
+
+-- ── 5. wh_promo_catalog_health ────────────────────────────────────────────────
+-- Powers: promo_catalog_health chunks (catalog state, period=NULL)
+-- Source: EP4 /api/v1/leo/promos/catalog-health
+--
+-- This is a snapshot table — overwrite-on-write semantics.
+-- ETL DELETEs rows for the business_id then INSERTs the fresh snapshot.
+
+CREATE TABLE IF NOT EXISTS wh_promo_catalog_health (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    promo_id                        INTEGER         NOT NULL,
+    promo_code_string               VARCHAR(20),
+    promo_label                     VARCHAR(150),
+    is_active                       SMALLINT,
+    expiration_date                 DATE,
+    is_expired                      SMALLINT        NOT NULL DEFAULT 0,
+    active_but_expired              SMALLINT        NOT NULL DEFAULT 0,
+    redemptions_last_90d            INTEGER         NOT NULL DEFAULT 0,
+    is_dormant                      SMALLINT        NOT NULL DEFAULT 0,
+    snapshot_date                   DATE            NOT NULL,
+    generated_at                    TIMESTAMP       NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (business_id, promo_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_promo_catalog_health_biz
+    ON wh_promo_catalog_health (business_id);
+
+
+-- ── Sanity: rollback notes ───────────────────────────────────────────────────
+-- To rollback this migration:
+--   DROP TABLE IF EXISTS wh_promo_catalog_health;
+--   DROP TABLE IF EXISTS wh_promo_location_codes;
+--   DROP TABLE IF EXISTS wh_promo_locations;
+--   DROP TABLE IF EXISTS wh_promo_codes;
+--   DROP TABLE IF EXISTS wh_promo_monthly;

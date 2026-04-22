@@ -271,6 +271,125 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "client drop", "customer drop", "new client change",
         "acquisition dropped", "acquisition fell",
     ],
+    "expenses": [
+        # ── Core domain words ────────────────────────────────────────────────
+        "expense", "expenses",
+        "cost", "costs", "costing",
+        "spending", "spend", "spent",
+        "overhead", "overheads",
+        "outflow", "outflows", "outgoing",
+        "bill", "bills", "billing",
+        "payable", "payables",
+        "expenditure", "expenditures",
+        "operating cost", "operating costs",
+        "operating expense", "operating expenses",
+        "opex",
+        "cogs",
+        "money out", "money going out",
+        "where does my money go",
+
+        # ── Category-level vocabulary ───────────────────────────────────────
+        "rent", "rental",
+        "utilities", "utility",
+        "electricity", "electric bill", "power bill",
+        "water bill", "internet bill",
+        "marketing spend", "ad spend", "advertising spend",
+        "supplies", "product supplies", "office supplies",
+        "insurance", "insurance premium",
+        "equipment", "equipment cost", "equipment purchase",
+        "payroll", "payroll cost", "salary cost", "wages",
+        "commission", "commissions",
+        "software", "subscriptions", "software cost",
+        "office cost", "admin cost", "administrative",
+        "maintenance",
+        "repair", "repairs",
+        "training", "training cost",
+        "travel", "travel expense",
+
+        # ── Anomaly / trend framing (Q22, Q23, Q24, Q25) ────────────────────
+        "spike", "spiked", "spiking",
+        "spent more", "spent less",
+        "higher than usual", "lower than usual",
+        "unusually high", "unusually low",
+        "more than usual", "less than usual",
+        "elevated",
+        "anomaly", "anomalous",
+        "abnormal",
+        "unexpected expense", "unexpected cost",
+        "increase in spending", "decrease in spending",
+        "expense growth", "cost reduction",
+
+        # ── Dormancy / inactivity (Q28) ─────────────────────────────────────
+        "dormant", "dormant category",
+        "stopped spending", "no longer spending",
+        "haven't spent", "haven't paid",
+        "silent category", "inactive category",
+        "stopped logging",
+        "gone quiet",
+
+        # ── Comparison / ranking ────────────────────────────────────────────
+        "biggest expense", "biggest cost",
+        "largest expense", "largest cost",
+        "most expensive",
+        "top expense", "top expenses",
+        "smallest expense",
+        "expense breakdown", "cost breakdown",
+        "spending breakdown",
+        "by category", "by location", "by branch",
+        "expense ranking", "cost ranking",
+
+        # ── Time-bound expense phrases ──────────────────────────────────────
+        "this month's expenses", "this month spending",
+        "last month's expenses", "last month spending",
+        "monthly expenses", "monthly costs", "monthly bills",
+        "year-to-date expenses", "ytd expenses", "ytd spending",
+        "quarterly expenses", "quarterly spending",
+        "qoq expenses",
+        "this quarter spending", "last quarter spending",
+
+        # ── Payment method (Q14, Q15) ───────────────────────────────────────
+        "paid in cash", "paid by check", "paid by card",
+        "paid with cash", "paid with check", "paid with card",
+        "cash spending", "check spending", "card spending",
+        "payment method", "payment type",
+        "how do I pay",
+        "cash vs card", "cash vs check",
+
+        # ── Staff attribution (Q26, NOT Q27) ────────────────────────────────
+        "who logs", "who logged", "who logs expenses",
+        "who entered", "who recorded",
+        "expense logger", "expense entry",
+        "data entry expenses",
+
+        # ── Causal / advice (Q23, Q25, Q30, Q31, Q32) ───────────────────────
+        "why did expenses",
+        "why did costs",
+        "what drove",
+        "explain my expenses",
+        "explain my costs",
+        "where can I cut costs",
+        "where to cut spending",
+        "reduce expenses", "reduce costs", "cut expenses",
+        "save money",
+        "optimize spending", "optimize costs",
+        "expense advice",
+
+        # ── Data-quality / honesty (Q29) ────────────────────────────────────
+        "duplicate expense", "duplicate expenses",
+        "duplicate entry", "duplicate entries",
+        "miscategorized",
+        "wrong category",
+        "expense mistake",
+        "double-counted",
+
+        # ── Location-scoped (Q16-Q19) ───────────────────────────────────────
+        "expenses by location", "expenses per location",
+        "expenses per branch", "expenses by branch",
+        "main st expenses", "westside expenses",
+        "branch expenses", "branch costs",
+        "which location spends",
+        "which branch spends",
+    ],
     "staff": [
         # Core staff vocabulary
         "staff", "employee", "employees", "team", "stylist", "therapist",
