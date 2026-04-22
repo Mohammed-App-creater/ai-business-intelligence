@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     SAAS_API_BASE: AnyUrl
     ANALYTICS_BACKEND_URL: str
-    ANALYTICS_BACKEND_API_KEY: str = ""
+    ANALYTICS_BACKEND_API_KEY: str = ""        # X-API-Key header (architecture doc v1.2)
+    ANALYTICS_BACKEND_BEARER_TOKEN: str = ""   # Authorization: Bearer (UAT curl style) ← NEW
 
 settings = Settings()

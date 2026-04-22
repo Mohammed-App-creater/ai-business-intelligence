@@ -5,8 +5,11 @@ A lightweight FastAPI server that returns fixture data for all endpoints:
   - 6 revenue endpoints
   - 4 appointments endpoints
   - 3 staff performance endpoints (2 modes + attendance)
-  - 5 services endpoints   ← NEW (Domain 4)
-  - 3 clients endpoints    ← NEW (Domain 5)
+  - 5 services endpoints
+  - 3 clients endpoints
+  - 3 marketing endpoints
+  - 6 expenses endpoints
+  - 4 promos endpoints      ← NEW (Domain 8)
 
 Run this locally while the real Analytics Backend is under development —
 the ETL, embeddings, and chat pipeline can all be tested end-to-end without
@@ -48,6 +51,8 @@ from tests.mocks.staff_appointments_fixtures import STAFF_ATTENDANCE
 from tests.mocks.services_fixtures import FIXTURES as SERVICES_FIXTURES
 from tests.mocks.clients_fixtures import FIXTURES as CLIENTS_FIXTURES
 from tests.mocks.marketing_fixtures import FIXTURES as MARKETING_FIXTURES
+from tests.mocks.expenses_fixtures import FIXTURES as EXPENSES_FIXTURES
+from tests.mocks.promos_fixtures import FIXTURES as PROMOS_FIXTURES   # NEW
 
 
 # ── Merge 2026 data into appointments fixtures ────────────────────────────────
@@ -76,7 +81,7 @@ _staff_fixtures = {
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.6.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.8.0")
 
 # Merge all fixtures into one lookup
 ALL_FIXTURES: dict[str, dict] = {
@@ -86,6 +91,8 @@ ALL_FIXTURES: dict[str, dict] = {
     **SERVICES_FIXTURES,
     **CLIENTS_FIXTURES,
     **MARKETING_FIXTURES,
+    **EXPENSES_FIXTURES,
+    **PROMOS_FIXTURES,   # NEW — includes /codes-window + /locations-by-code alias paths
 }
 
 
@@ -171,6 +178,76 @@ def _make_staff_performance_handler():
     return handler
 
 
+def _make_promos_codes_handler():
+    """
+    Handles /api/v1/leo/promos/codes.
+    Reads granularity from request body: 'monthly' (default) or 'window'.
+    """
+    async def handler(request: Request):
+        body        = await request.json()
+        business_id = body.get("business_id", 0)
+        granularity = body.get("granularity", "monthly")
+
+        if business_id not in AUTHORISED_BUSINESS_IDS:
+            return JSONResponse(
+                status_code=403,
+                content={"error": f"business_id {business_id} not authorised"},
+            )
+
+        path = (
+            "/api/v1/leo/promos/codes-window"
+            if granularity == "window"
+            else "/api/v1/leo/promos/codes"
+        )
+
+        data = _response_for(path, business_id)
+        if data is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"no fixture for granularity={granularity}"},
+            )
+
+        return JSONResponse(status_code=200, content=data)
+
+    handler.__name__ = "promos_codes_handler"
+    return handler
+
+
+def _make_promos_locations_handler():
+    """
+    Handles /api/v1/leo/promos/locations.
+    Reads shape from request body: 'rollup' (default) or 'by_code'.
+    """
+    async def handler(request: Request):
+        body        = await request.json()
+        business_id = body.get("business_id", 0)
+        shape       = body.get("shape", "rollup")
+
+        if business_id not in AUTHORISED_BUSINESS_IDS:
+            return JSONResponse(
+                status_code=403,
+                content={"error": f"business_id {business_id} not authorised"},
+            )
+
+        path = (
+            "/api/v1/leo/promos/locations-by-code"
+            if shape == "by_code"
+            else "/api/v1/leo/promos/locations"
+        )
+
+        data = _response_for(path, business_id)
+        if data is None:
+            return JSONResponse(
+                status_code=404,
+                content={"error": f"no fixture for shape={shape}"},
+            )
+
+        return JSONResponse(status_code=200, content=data)
+
+    handler.__name__ = "promos_locations_handler"
+    return handler
+
+
 # ── Revenue endpoints (6) ─────────────────────────────────────────────────────
 REVENUE_PATHS = [
     "/api/v1/leo/revenue/monthly-summary",
@@ -217,6 +294,24 @@ MARKETING_PATHS = [
     "/api/v1/leo/marketing/promo-attribution-monthly",
 ]
 
+# ── Expenses endpoints (6) ── NEW ─────────────────────────────────────────────
+EXPENSES_PATHS = [
+    "/api/v1/leo/expenses/monthly-summary",
+    "/api/v1/leo/expenses/category-breakdown",
+    "/api/v1/leo/expenses/location-breakdown",
+    "/api/v1/leo/expenses/payment-type-breakdown",
+    "/api/v1/leo/expenses/staff-attribution",
+    "/api/v1/leo/expenses/category-location-cross",
+]
+
+# ── Promos endpoints (2 standard + 2 shape-switched) ── NEW ───────────────────
+# /codes and /locations are registered via custom handlers (below) because
+# they switch shape based on a request-body parameter (granularity / shape).
+PROMOS_STANDARD_PATHS = [
+    "/api/v1/leo/promos/monthly",
+    "/api/v1/leo/promos/catalog-health",
+]
+
 ALL_PATHS = (
     REVENUE_PATHS
     + APPOINTMENTS_PATHS
@@ -224,6 +319,8 @@ ALL_PATHS = (
     + SERVICES_PATHS
     + CLIENTS_PATHS
     + MARKETING_PATHS
+    + EXPENSES_PATHS
+    + PROMOS_STANDARD_PATHS   # NEW
 )
 
 for _path in ALL_PATHS:
@@ -236,6 +333,18 @@ app.add_api_route(
     methods=["POST"],
 )
 
+# Promos /codes and /locations need their own handlers (shape switching)
+app.add_api_route(
+    "/api/v1/leo/promos/codes",
+    _make_promos_codes_handler(),
+    methods=["POST"],
+)
+app.add_api_route(
+    "/api/v1/leo/promos/locations",
+    _make_promos_locations_handler(),
+    methods=["POST"],
+)
+
 
 # ── Health check ──────────────────────────────────────────────────────────────
 
@@ -244,7 +353,7 @@ async def health():
     return {
         "status": "ok",
         "mode": "mock",
-        "version": "1.6.0",
+        "version": "1.8.0",
         "endpoints": {
             "revenue":      len(REVENUE_PATHS),
             "appointments": len(APPOINTMENTS_PATHS),
@@ -252,7 +361,9 @@ async def health():
             "services":     len(SERVICES_PATHS),
             "clients":      len(CLIENTS_PATHS),
             "marketing":    len(MARKETING_PATHS),
-            "total":        len(ALL_PATHS) + 1,
+            "expenses":     len(EXPENSES_PATHS),
+            "promos":       len(PROMOS_STANDARD_PATHS) + 2,   # +2 for shape-switched
+            "total":        len(ALL_PATHS) + 3,   # +1 staff-perf, +2 promos
         },
     }
 
@@ -312,7 +423,7 @@ def start_mock_server() -> MockAnalyticsServer:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting LEO Mock Analytics Server v1.6.0 on http://localhost:8001")
+    print("Starting LEO Mock Analytics Server v1.8.0 on http://localhost:8001")
     print()
     print("Revenue endpoints (6):")
     for p in REVENUE_PATHS:
@@ -338,6 +449,16 @@ if __name__ == "__main__":
     for p in MARKETING_PATHS:
         print(f"  POST {p}")
     print()
-    print(f"Total: {len(ALL_PATHS) + 1} endpoints")
+    print("Expenses endpoints (6):")
+    for p in EXPENSES_PATHS:
+        print(f"  POST {p}")
+    print()
+    print("Promos endpoints (4):")   # NEW
+    for p in PROMOS_STANDARD_PATHS:
+        print(f"  POST {p}")
+    print("  POST /api/v1/leo/promos/codes      {granularity: 'monthly'|'window'}")
+    print("  POST /api/v1/leo/promos/locations  {shape: 'rollup'|'by_code'}")
+    print()
+    print(f"Total: {len(ALL_PATHS) + 3} endpoints")
     print("Health: GET http://localhost:8001/health")
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)

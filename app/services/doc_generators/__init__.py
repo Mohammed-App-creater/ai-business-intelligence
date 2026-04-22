@@ -31,6 +31,8 @@ from app.services.doc_generators.domains.clients import generate_client_docs
 from etl.transforms.clients_etl import ClientsExtractor
 from app.services.doc_generators.domains.marketing import generate_marketing_docs
 from etl.transforms.marketing_etl import MarketingExtractor
+from app.services.doc_generators.domains.expenses import generate_expenses_docs
+from etl.transforms.expenses_etl import ExpensesExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
@@ -1188,41 +1190,86 @@ class DocGenerator:
             result["docs_failed"],
         )
 
+    async def _fetch_expenses_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        """
+        Run the ExpensesExtractor for the requested period.
+        Returns the dict produced by ExpensesExtractor.run():
+            {
+                "monthly_summary",        "category_breakdown",
+                "subcategory_breakdown",  "location_breakdown",
+                "payment_type_breakdown", "staff_attribution",
+                "category_location_cross",
+            }
+        Each value is a list[dict] ready for generate_expenses_docs().
+        """
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "monthly_summary":          [],
+                "category_breakdown":       [],
+                "subcategory_breakdown":    [],
+                "location_breakdown":       [],
+                "payment_type_breakdown":   [],
+                "staff_attribution":        [],
+                "category_location_cross":  [],
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = ExpensesExtractor(client=client, wh_pool=self._wh._pool)
+        return await extractor.run(
+            business_id=org_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
     async def _gen_expenses(
         self, org_id: int, period_start: date | None, months: int, force: bool
     ) -> tuple[int, int, int]:
-        created = skipped = failed = 0
-        tenant = str(org_id)
-        for ps in self._month_periods(period_start, months):
-            pl = self._period_label(ps)
-            raw = await self._wh.expenses.get_expense_monthly_summary(org_id, ps)
-            rows = [r for r in raw if int(r.get("location_id") or 0) == 0]
-            if not rows:
-                rows = raw
-            total = await self._wh.expenses.get_expense_total(org_id, ps)
-            if not rows and not (total and float(total.get("total") or 0)):
-                continue
-            kpi = self._kpi_expenses(rows, total, pl)
-            doc_id = f"{org_id}_expenses_monthly_{self._doc_month_suffix(ps)}"
-            data = DocGenData(
-                business_id=str(org_id),
-                business_type=self._biz_type,
-                period=pl,
-                doc_domain="expenses",
-                doc_type="monthly_summary",
-                kpi_block=kpi,
-            )
-            chunk = await self._make_chunk_text(org_id, data)
-            st = await self._store_doc(
-                tenant, doc_id, "expenses", "monthly_summary", chunk, ps, {}, force
-            )
-            if st == "created":
-                created += 1
-            elif st == "skipped":
-                skipped += 1
-            else:
-                failed += 1
-        return created, skipped, failed
+        """
+        Expenses domain doc generation.
+        Fetch warehouse rows → generate_expenses_docs builds + embeds chunks.
+
+        Replaces the legacy _gen_expenses that read from wh_expense_summary —
+        the new pipeline reads from wh_exp_* tables (populated by ExpensesExtractor)
+        and produces 8 RAG doc types including dormant-category derivation.
+
+        Expected result for a 6-month / biz_id=42 mock-server run:
+          monthly=6 + category=45 + subcat=3 + location=12 + payment=18
+          + staff=7 + cross=28 + dormant=1 = 120 docs
+        """
+        warehouse_data = await self._fetch_expenses_warehouse_rows(
+            org_id, period_start, months,
+        )
+        period_end = None
+        if period_start is not None:
+            from dateutil.relativedelta import relativedelta
+            last_period = period_start + relativedelta(months=months - 1)
+            from calendar import monthrange as _mr
+            last_day = _mr(last_period.year, last_period.month)[1]
+            period_end = date(last_period.year, last_period.month, last_day)
+
+        result = await generate_expenses_docs(
+            org_id=org_id,
+            warehouse_data=warehouse_data,
+            emb_client=self._emb,
+            vector_store=self._vs,
+            force=force,
+            period_end=period_end,
+        )
+        return (
+            result.get("created", 0),
+            result.get("skipped", 0),
+            result.get("failed", 0),
+        )
 
     async def _gen_reviews(
         self, org_id: int, period_start: date | None, months: int, force: bool

@@ -93,15 +93,39 @@ class AnalyticsClient:
     Sprint 7  — memberships  ⬜
     Sprint 8  — giftcards    ⬜
     Sprint 9  — promos       ⬜
-    Sprint 10 — expenses     ⬜
+    Sprint 10 — expenses     ✅
     Sprint 11 — forms        ⬜
     """
     
-    def __init__(self, base_url: str, timeout: float = 30.0):
+    def __init__(
+        self,
+        base_url: str,
+        timeout: float = 30.0,
+        *,
+        api_key: str | None = None,
+        bearer_token: str | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        
-        
+
+        # Resolve auth — explicit args win, else fall back to settings.
+        # Both headers are sent if both are set. Backend team will confirm
+        # which one they want; once confirmed we drop the unused one.
+        resolved_key   = api_key      if api_key      is not None else settings.ANALYTICS_BACKEND_API_KEY
+        resolved_token = bearer_token if bearer_token is not None else settings.ANALYTICS_BACKEND_BEARER_TOKEN
+
+        self._auth_headers: dict[str, str] = {}
+        if resolved_token:
+            self._auth_headers["Authorization"] = f"Bearer {resolved_token}"
+        if resolved_key:
+            self._auth_headers["X-API-Key"] = resolved_key
+
+        logger.debug(
+            "AnalyticsClient auth: bearer=%s api_key=%s",
+            "yes" if resolved_token else "no",
+            "yes" if resolved_key else "no",
+        )
+
 
     # -------------------------------------------------------------------------
     # REVENUE DOMAIN — 6 endpoints
@@ -954,6 +978,216 @@ class AnalyticsClient:
         )
         return body.get("data", [])
 
+    # ── EXPENSES DOMAIN ───────────────────────────────────────────────────────
+    # 6 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 10 — expenses
+
+    async def get_expenses_monthly_summary(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP1 — Monthly expense rollup with MoM, QoQ, YTD, outlier flags.
+
+        Returns one row per month in the window.
+
+        Powers Q1–Q8, Q20, Q21, Q25, S1, S4.
+
+        Key fields returned per row:
+            period, total_expenses, transaction_count,
+            avg_transaction, min_transaction, max_transaction,
+            prev_month_expenses, mom_change_pct, mom_direction,
+            ytd_total, window_cumulative,
+            current_quarter_total, prev_quarter_total, qoq_change_pct,
+            expense_rank_in_window, avg_monthly_in_window, months_in_window,
+            large_txn_count, huge_txn_count
+
+        Notes:
+          - quarter fields are NULL when the quarter is incomplete (<3 months
+            in window) — forces honest "insufficient data" from the AI.
+          - ytd_total resets every January 1 (calendar year).
+          - large_txn_count / huge_txn_count flag >$100K / >$1M single txns
+            so the AI can caveat (not filter) suspicious values.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post(
+            "/api/v1/leo/expenses/monthly-summary", payload
+        )
+
+    async def get_expenses_category_breakdown(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+        include_subcategories: bool = False,
+    ) -> list[dict]:
+        """
+        EP2 — Category-level breakdown per month with 3-month baseline + anomaly flag.
+
+        Returns one row per (period × category). Dormant categories (zero
+        activity in the period) are ABSENT from the response — dormant
+        detection is a doc-layer responsibility (see expenses doc generator).
+
+        Powers Q9–Q13, Q20–Q24, Q28 (via doc-layer logic).
+
+        Key fields returned per row:
+            period, category_id, category_name, category_total,
+            transaction_count, month_total, pct_of_month, rank_in_month,
+            prev_month_total, mom_change_pct,
+            baseline_3mo_avg, baseline_months_available,
+            pct_vs_baseline, anomaly_flag,
+            subcategory_breakdown  (present only when include_subcategories=True)
+
+        anomaly_flag values (for RAG retrieval against natural-language
+        questions like "spiked", "more than usual"):
+            spike (>= +50% vs baseline)
+            elevated (>= +20%)
+            normal (±20%)
+            low (-20% to -50%)
+            unusual_low (<= -50%)
+            null (insufficient baseline)
+        """
+        payload = {
+            "business_id":           business_id,
+            "start_date":            start_date.isoformat(),
+            "end_date":              end_date.isoformat(),
+            "include_subcategories": include_subcategories,
+        }
+        return await self._post(
+            "/api/v1/leo/expenses/category-breakdown", payload
+        )
+
+    async def get_expenses_location_breakdown(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP3 — Per-location monthly totals with MoM.
+
+        The org-level rollup is NOT returned here — that's in monthly-summary.
+        Keeping them separate matters for RAG retrieval (exclude_rollup on
+        location comparison queries — Appointments sprint lesson).
+
+        Powers Q16, Q17, Q18, Q19 (with cross), S3.
+
+        Key fields returned per row:
+            period, location_id, location_name, location_total,
+            transaction_count, month_total, pct_of_month, rank_in_month,
+            prev_month_total, mom_change_pct
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post(
+            "/api/v1/leo/expenses/location-breakdown", payload
+        )
+
+    async def get_expenses_payment_type_breakdown(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP4 — Monthly Cash/Check/Card split.
+
+        PaymentType enum (confirmed 2026-04-21 from frontend source):
+            1 = Cash
+            2 = Check
+            3 = Card
+
+        Unknown codes (future drift) return payment_type_label="Type {N}"
+        as a visible drift alarm.
+
+        Powers Q14, Q15.
+
+        Key fields returned per row:
+            period, payment_type_code, payment_type_label,
+            type_total, transaction_count, month_total, pct_of_month
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post(
+            "/api/v1/leo/expenses/payment-type-breakdown", payload
+        )
+
+    async def get_expenses_staff_attribution(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP5 — Aggregate staff entry-count ranking. PII-hardened.
+
+        Only employees with >= 3 entries in the month are returned
+        (k-anonymity guard). In typical tenants this returns 1 row/month
+        (one admin logs all expenses) — that's expected and handled
+        by the doc generator narrative.
+
+        Powers Q26 (aggregate). Q27 (individual lookup by name) is blocked
+        at the AI router and never reaches this call.
+
+        Key fields returned per row:
+            period, employee_id, employee_name,
+            entries_logged, total_amount_logged, rank_in_month
+
+        NOTE: total_amount_logged is returned for ops dashboards but
+        the doc generator does NOT embed it into RAG chunks — per-
+        individual dollar totals are borderline surveillance.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post(
+            "/api/v1/leo/expenses/staff-attribution", payload
+        )
+
+    async def get_expenses_category_location_cross(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP6 — Category mix per location per month — the heaviest query.
+
+        Returns one row per (period × location × category) where the
+        intersection has activity. For a multi-location salon with
+        many categories over 6 months this can be 400+ rows.
+
+        Powers Q19 (category mix by location).
+
+        Key fields returned per row:
+            period, location_id, location_name,
+            category_id, category_name,
+            cross_total, transaction_count,
+            pct_of_location_month, rank_in_location_month
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post(
+            "/api/v1/leo/expenses/category-location-cross", payload
+        )
+
     # -------------------------------------------------------------------------
     # Internal HTTP helper
     # -------------------------------------------------------------------------
@@ -962,7 +1196,7 @@ class AnalyticsClient:
         url = f"{self.base_url}{path}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, json=payload)
+                response = await client.post(url, json=payload, headers=self._auth_headers)
                 response.raise_for_status()
                 body = response.json()
                 # All analytics endpoints return { "data": [...], "meta": {...} }
@@ -984,7 +1218,7 @@ class AnalyticsClient:
         url = f"{self.base_url}{path}"
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(url, json=payload)
+                response = await client.post(url, json=payload, headers=self._auth_headers)
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as e:
