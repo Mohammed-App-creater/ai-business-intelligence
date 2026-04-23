@@ -1,30 +1,31 @@
 """
-LEO AI BI — Revenue ETL Extractor
-Revenue Domain — Step 7 Refinement (post Step 6 findings)
+etl/transforms/revenue_etl.py
+==============================
+Revenue domain ETL extractor.
 
-Pulls all 6 revenue data slices from the analytics backend, computes
-warehouse-layer fields, and returns structured documents ready for
-embedding into pgvector.
+Pulls all 6 revenue data slices from the analytics backend, writes
+them to the warehouse (wh_monthly_revenue, wh_payment_breakdown),
+and returns structured documents for immediate embedding into pgvector.
 
-Step 7 changes (2026-04-22):
-  + New doc_type 'trend_summary' — one per period window, answers
-    "is my revenue trending up or down?" by quoting the backend's
-    trend_slope directly instead of letting the AI recompute M-to-M deltas.
-  + New doc_type 'tips_and_extras' — one per month, surfaces tips/tax/
-    discounts/gc_redemptions as retrievable chunks (was buried in a
-    comma-separated list inside monthly_summary, so RAG kept missing it).
-  + promo_impact doc now emits even when backend returns zero rows,
-    with explicit "NONE" text that disambiguates promo codes from
-    general discounts (was causing the AI to quote total_discounts
-    as promo cost).
-  + Every doc now carries period_start in metadata for future filtering.
+Flow:
+    UAT Analytics Backend
+        ↓  RevenueExtractor.run()
+        ↓  _write_to_warehouse()  ← writes to 2 wh_* tables (when wh_pool set)
+    wh_monthly_revenue       ← org rollup + per-location rows
+    wh_payment_breakdown     ← cash/card/GC split per org-period
+        ↓  docs returned to doc generator → pgvector
 
-Usage:
+Usage (with warehouse write — production path):
+    extractor = RevenueExtractor(client=analytics_client, wh_pool=wh_pool)
+    docs = await extractor.run(business_id=42, start_date=..., end_date=...)
+
+Usage (without warehouse — tests):
     extractor = RevenueExtractor(client=analytics_client)
     docs = await extractor.run(business_id=42, start_date=..., end_date=...)
 """
 
 from datetime import date
+from calendar import monthrange
 import numpy as np
 import logging
 
@@ -36,13 +37,24 @@ logger = logging.getLogger(__name__)
 class RevenueExtractor:
     """
     Pulls and transforms all revenue data for one tenant.
-    Output: a list of structured embedding documents.
+
+    Parameters
+    ----------
+    client:   AnalyticsClient — calls the analytics backend API.
+    wh_pool:  Optional asyncpg/PGPool — when provided, writes extracted
+              rows to wh_monthly_revenue and wh_payment_breakdown before
+              returning. When None, the warehouse write is skipped.
     """
 
     DOMAIN = "revenue"
 
-    def __init__(self, client: AnalyticsClient):
+    def __init__(self, client: AnalyticsClient, wh_pool=None):
         self.client = client
+        self.wh_pool = wh_pool
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Public entry point
+    # ─────────────────────────────────────────────────────────────────────────
 
     async def run(
         self,
@@ -50,16 +62,12 @@ class RevenueExtractor:
         start_date: date,
         end_date: date,
     ) -> list[dict]:
-        """
-        Main entry point. Fetches all 6 slices and returns warehouse-ready
-        documents for this tenant.
-        """
         logger.info(
             "Revenue ETL start — business_id=%s %s → %s",
             business_id, start_date, end_date,
         )
 
-        # Fetch all 6 slices (parallelise with asyncio.gather once stable)
+        # ── 1. Fetch all 6 slices ────────────────────────────────────────────
         monthly     = await self.client.get_revenue_monthly_summary(business_id, start_date, end_date)
         pay_types   = await self.client.get_revenue_payment_types(business_id, start_date, end_date)
         by_staff    = await self.client.get_revenue_by_staff(business_id, start_date, end_date)
@@ -69,56 +77,51 @@ class RevenueExtractor:
 
         docs: list[dict] = []
 
-        # ── 1. Monthly summary — one doc per period ───────────────────────────
+        # ── 2. Build docs (same as Step 7) ───────────────────────────────────
         trend_slope = self._compute_trend_slope(monthly)
+
         for row in monthly:
             docs.append(self._build_monthly_doc(business_id, row, trend_slope))
 
-        # ── 1b. NEW: Trend summary — one doc for the whole window ─────────────
-        # Answers "overall trend" questions with an unambiguous verdict instead
-        # of letting the AI compute a 2-month delta and call that the trend.
         if monthly:
             docs.append(self._build_trend_summary_doc(
                 business_id, monthly, trend_slope, start_date, end_date,
             ))
 
-        # ── 1c. NEW: Tips & extras — one doc per month ────────────────────────
-        # Tips, tax, discounts, gift-card redemptions as their own retrievable
-        # chunks. In monthly_summary these were buried in a comma-separated
-        # list, so embedding retrieval kept missing them.
         for row in monthly:
             docs.append(self._build_tips_and_extras_doc(business_id, row))
 
-        # ── 2. Payment type summary (one aggregate doc) ──────────────────────
         if pay_types:
             docs.append(self._build_payment_type_doc(
                 business_id, pay_types, start_date, end_date,
             ))
 
-        # ── 3. Staff revenue — one doc per staff member ──────────────────────
         for row in by_staff:
             docs.append(self._build_staff_doc(
                 business_id, row, start_date, end_date,
             ))
 
-        # ── 4. Location revenue — one doc per location per period ────────────
         for row in by_location:
             docs.append(self._build_location_doc(business_id, row))
 
-        # ── 5. Promo impact (always emit, even when empty) ───────────────────
-        # Step 7 change: was `if promos: ...`. An empty response used to
-        # produce NO doc, so RAG would grab the next-best chunk (monthly
-        # total_discounts) and the AI would confuse manual discounts with
-        # promo code cost. Now we emit a "NONE" chunk with disambiguation.
         docs.append(self._build_promo_doc(
             business_id, promos, start_date, end_date,
         ))
 
-        # ── 6. Failed / refunded visits (one aggregate doc) ──────────────────
         if failed:
             docs.append(self._build_failed_doc(
                 business_id, failed, start_date, end_date,
             ))
+
+        # ── 3. Write to warehouse (if pool provided) ─────────────────────────
+        if self.wh_pool is not None:
+            await self._write_to_warehouse(
+                business_id, monthly, pay_types, by_location,
+            )
+        else:
+            logger.debug(
+                "RevenueExtractor: wh_pool not provided — skipping warehouse write"
+            )
 
         logger.info(
             "Revenue ETL complete — business_id=%s, %d docs produced",
@@ -126,19 +129,290 @@ class RevenueExtractor:
         )
         return docs
 
-    # ── Document builders ────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Warehouse write
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _write_to_warehouse(
+        self,
+        business_id: int,
+        monthly: list[dict],
+        pay_types: list[dict],
+        by_location: list[dict],
+    ) -> None:
+        """
+        Upsert revenue data into the 2 warehouse tables. Idempotent.
+
+        wh_monthly_revenue gets TWO kinds of rows:
+          - location_id=0 rows   — org rollup from /monthly-summary
+          - location_id>0 rows   — per-location breakdown from /by-location
+
+        wh_payment_breakdown gets ONE row per period at org level
+        (location_id=0), prorating window-total payment splits by
+        each period's share of visits.
+        """
+        async with self.wh_pool.acquire() as conn:
+            async with conn.transaction():
+                await self._upsert_monthly_rollup(conn, business_id, monthly)
+                await self._upsert_monthly_locations(conn, business_id, by_location)
+                await self._upsert_payment_breakdown(conn, business_id, monthly, pay_types)
+
+        logger.info(
+            "RevenueExtractor: warehouse write complete — "
+            "monthly_rollup=%d monthly_loc=%d payment_periods=%d",
+            len(monthly), len(by_location), len(monthly),
+        )
+
+    async def _upsert_monthly_rollup(
+        self, conn, business_id: int, monthly: list[dict],
+    ) -> None:
+        if not monthly:
+            return
+
+        sql = """
+INSERT INTO wh_monthly_revenue (
+    business_id, location_id, period_start, period_end,
+    total_revenue, total_tips, total_tax, total_discounts, total_gc_amount,
+    gross_revenue, visit_count, successful_visit_count,
+    refunded_visit_count, cancelled_visit_count, avg_visit_value,
+    cash_revenue, card_revenue, other_revenue
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8, $9,
+    $10, $11, $12,
+    $13, $14, $15,
+    $16, $17, $18
+)
+ON CONFLICT (business_id, location_id, period_start) DO UPDATE SET
+    period_end             = EXCLUDED.period_end,
+    total_revenue          = EXCLUDED.total_revenue,
+    total_tips             = EXCLUDED.total_tips,
+    total_tax              = EXCLUDED.total_tax,
+    total_discounts        = EXCLUDED.total_discounts,
+    total_gc_amount        = EXCLUDED.total_gc_amount,
+    gross_revenue          = EXCLUDED.gross_revenue,
+    visit_count            = EXCLUDED.visit_count,
+    successful_visit_count = EXCLUDED.successful_visit_count,
+    refunded_visit_count   = EXCLUDED.refunded_visit_count,
+    cancelled_visit_count  = EXCLUDED.cancelled_visit_count,
+    avg_visit_value        = EXCLUDED.avg_visit_value,
+    cash_revenue           = EXCLUDED.cash_revenue,
+    card_revenue           = EXCLUDED.card_revenue,
+    other_revenue          = EXCLUDED.other_revenue,
+    updated_at             = now()
+"""
+        records = []
+        for r in monthly:
+            ps, pe = self._period_bounds(r.get("period", ""))
+            service_rev = float(r.get("service_revenue", 0) or 0)
+            tips        = float(r.get("total_tips", 0) or 0)
+            tax         = float(r.get("total_tax", 0) or 0)
+            discounts   = float(r.get("total_discounts", 0) or 0)
+            gc          = float(r.get("gc_redemptions", 0) or 0)
+            total_col   = float(r.get("total_collected", 0) or 0)
+            visits      = int(r.get("visit_count", 0) or 0)
+            refunds     = int(r.get("refund_count", 0) or 0)
+            cancels     = int(r.get("cancel_count", 0) or 0)
+            avg_ticket  = float(r.get("avg_ticket", 0) or 0)
+            # successful ≈ visits minus refunds minus cancels
+            successful  = max(0, visits - refunds - cancels)
+
+            records.append((
+                business_id,
+                0,              # org rollup
+                ps,
+                pe,
+                service_rev,    # total_revenue
+                tips,
+                tax,
+                discounts,
+                gc,             # total_gc_amount
+                total_col,      # gross_revenue (incl tips+tax)
+                visits,
+                successful,
+                refunds,
+                cancels,
+                avg_ticket,
+                0.0,            # cash_revenue — payment_breakdown table holds the split
+                0.0,            # card_revenue
+                0.0,            # other_revenue
+            ))
+        await conn.executemany(sql, records)
+
+    async def _upsert_monthly_locations(
+        self, conn, business_id: int, by_location: list[dict],
+    ) -> None:
+        if not by_location:
+            return
+
+        sql = """
+INSERT INTO wh_monthly_revenue (
+    business_id, location_id, period_start, period_end,
+    total_revenue, total_tips, total_discounts, total_gc_amount,
+    gross_revenue, visit_count, successful_visit_count, avg_visit_value
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8,
+    $9, $10, $11, $12
+)
+ON CONFLICT (business_id, location_id, period_start) DO UPDATE SET
+    period_end             = EXCLUDED.period_end,
+    total_revenue          = EXCLUDED.total_revenue,
+    total_tips             = EXCLUDED.total_tips,
+    total_discounts        = EXCLUDED.total_discounts,
+    total_gc_amount        = EXCLUDED.total_gc_amount,
+    gross_revenue          = EXCLUDED.gross_revenue,
+    visit_count            = EXCLUDED.visit_count,
+    successful_visit_count = EXCLUDED.successful_visit_count,
+    avg_visit_value        = EXCLUDED.avg_visit_value,
+    updated_at             = now()
+"""
+        records = []
+        for r in by_location:
+            ps, pe = self._period_bounds(r.get("period", ""))
+            loc_id = int(r.get("location_id", 0) or 0)
+            if loc_id <= 0:
+                continue
+            service_rev = float(r.get("service_revenue", 0) or 0)
+            tips        = float(r.get("total_tips", 0) or 0)
+            discounts   = float(r.get("total_discounts", 0) or 0)
+            gc          = float(r.get("gc_redemptions", 0) or 0)
+            visits      = int(r.get("visit_count", 0) or 0)
+            avg_ticket  = float(r.get("avg_ticket", 0) or 0)
+            gross       = service_rev + tips
+
+            records.append((
+                business_id,
+                loc_id,
+                ps,
+                pe,
+                service_rev,
+                tips,
+                discounts,
+                gc,
+                gross,
+                visits,
+                visits,     # by-location endpoint returns only successful
+                avg_ticket,
+            ))
+
+        if records:
+            await conn.executemany(sql, records)
+
+    async def _upsert_payment_breakdown(
+        self,
+        conn,
+        business_id: int,
+        monthly: list[dict],
+        pay_types: list[dict],
+    ) -> None:
+        if not pay_types or not monthly:
+            return
+
+        # Aggregate window-total per payment type into canonical buckets
+        pt_totals = {
+            "cash":      [0.0, 0],
+            "card":      [0.0, 0],
+            "gift_card": [0.0, 0],
+            "other":     [0.0, 0],
+        }
+        for pt in pay_types:
+            ptype = str(pt.get("payment_type", "")).lower()
+            revenue = float(pt.get("revenue", 0) or 0)
+            count   = int(pt.get("visit_count", 0) or 0)
+            if "cash" in ptype:
+                k = "cash"
+            elif "credit" in ptype or "card" in ptype:
+                k = "card"
+            elif "gift" in ptype or "giftcard" in ptype:
+                k = "gift_card"
+            else:
+                k = "other"
+            pt_totals[k][0] += revenue
+            pt_totals[k][1] += count
+
+        total_visits = sum(int(r.get("visit_count", 0) or 0) for r in monthly)
+        if total_visits <= 0:
+            return
+
+        sql = """
+INSERT INTO wh_payment_breakdown (
+    business_id, location_id, period_start, period_end,
+    cash_amount, cash_count, card_amount, card_count,
+    gift_card_amount, gift_card_count, other_amount, other_count,
+    total_amount, total_count
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8,
+    $9, $10, $11, $12,
+    $13, $14
+)
+ON CONFLICT (business_id, location_id, period_start) DO UPDATE SET
+    period_end       = EXCLUDED.period_end,
+    cash_amount      = EXCLUDED.cash_amount,
+    cash_count       = EXCLUDED.cash_count,
+    card_amount      = EXCLUDED.card_amount,
+    card_count       = EXCLUDED.card_count,
+    gift_card_amount = EXCLUDED.gift_card_amount,
+    gift_card_count  = EXCLUDED.gift_card_count,
+    other_amount     = EXCLUDED.other_amount,
+    other_count      = EXCLUDED.other_count,
+    total_amount     = EXCLUDED.total_amount,
+    total_count      = EXCLUDED.total_count,
+    updated_at       = now()
+"""
+        records = []
+        for r in monthly:
+            ps, pe = self._period_bounds(r.get("period", ""))
+            visits = int(r.get("visit_count", 0) or 0)
+            weight = visits / total_visits if total_visits else 0.0
+
+            cash_amt = round(pt_totals["cash"][0]      * weight, 2)
+            cash_cnt = round(pt_totals["cash"][1]      * weight)
+            card_amt = round(pt_totals["card"][0]      * weight, 2)
+            card_cnt = round(pt_totals["card"][1]      * weight)
+            gc_amt   = round(pt_totals["gift_card"][0] * weight, 2)
+            gc_cnt   = round(pt_totals["gift_card"][1] * weight)
+            oth_amt  = round(pt_totals["other"][0]     * weight, 2)
+            oth_cnt  = round(pt_totals["other"][1]     * weight)
+
+            records.append((
+                business_id,
+                0,                          # org level
+                ps,
+                pe,
+                cash_amt, cash_cnt,
+                card_amt, card_cnt,
+                gc_amt,   gc_cnt,
+                oth_amt,  oth_cnt,
+                round(cash_amt + card_amt + gc_amt + oth_amt, 2),
+                cash_cnt + card_cnt + gc_cnt + oth_cnt,
+            ))
+        await conn.executemany(sql, records)
+
+    @staticmethod
+    def _period_bounds(period_label: str) -> tuple[date, date]:
+        try:
+            y = int(period_label[:4])
+            m = int(period_label[5:7])
+            return date(y, m, 1), date(y, m, monthrange(y, m)[1])
+        except (ValueError, IndexError):
+            today = date.today()
+            return today.replace(day=1), today
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Doc builders  (unchanged from Step 7)
+    # ─────────────────────────────────────────────────────────────────────────
 
     def _build_monthly_doc(
         self, business_id: int, row: dict, trend_slope: float,
     ) -> dict:
-        """One document per period — the core revenue time-series row."""
         return {
             "tenant_id": business_id,
             "domain": self.DOMAIN,
             "doc_type": "monthly_summary",
             "period": row["period"],
-            "period_start": row["period"],     # for retrieval filtering
-            # Core metrics
+            "period_start": row["period"],
             "visit_count": row.get("visit_count", 0),
             "service_revenue": row.get("service_revenue", 0.0),
             "total_tips": row.get("total_tips", 0.0),
@@ -147,52 +421,29 @@ class RevenueExtractor:
             "total_discounts": row.get("total_discounts", 0.0),
             "gc_redemptions": row.get("gc_redemptions", 0.0),
             "avg_ticket": row.get("avg_ticket", 0.0),
-            # Computed
             "mom_growth_pct": row.get("mom_growth_pct"),
             "trend_slope": trend_slope,
             "trend_direction": self._direction_label(trend_slope),
-            # Edge-case counts
             "refund_count": row.get("refund_count", 0),
             "cancel_count": row.get("cancel_count", 0),
-            # Embedding text
             "text": self._monthly_text(row, trend_slope),
         }
 
     def _build_trend_summary_doc(
-        self,
-        business_id: int,
-        monthly_rows: list[dict],
-        trend_slope: float,
-        start_date: date,
-        end_date: date,
+        self, business_id: int, monthly_rows: list[dict],
+        trend_slope: float, start_date: date, end_date: date,
     ) -> dict:
-        """
-        Step 7 NEW: an overall-trend answer chunk.
-
-        Key insight from Step 6: the AI was computing its own trend from
-        the latest month-to-month delta (e.g. Feb→Mar -83.9%) and
-        reporting "declining" even when the backend's regression says
-        "+3949.55 slope / growing". This doc forces the AI to quote the
-        backend's verdict and includes the reconciliation rationale so
-        the AI doesn't contradict it.
-        """
         direction = self._direction_label(trend_slope)
-        direction_word = {
-            "up":   "GROWING",
-            "down": "DECLINING",
-            "flat": "FLAT",
-        }[direction]
+        direction_word = {"up": "GROWING", "down": "DECLINING", "flat": "FLAT"}[direction]
 
-        # Build per-month mini-summary for context
         mom_lines = []
-        for i, r in enumerate(monthly_rows):
+        for r in monthly_rows:
             period = r.get("period", "?")
             rev    = r.get("service_revenue", 0.0)
             mom    = r.get("mom_growth_pct")
             mom_s  = f" ({mom:+.1f}% MoM)" if mom is not None else " (first period, no MoM)"
             mom_lines.append(f"  {period}: ${rev:,.2f}{mom_s}")
 
-        # Reconciliation text — teaches the AI to prefer slope over MoM
         if direction == "up":
             reconciliation = (
                 "IMPORTANT: The overall trend is GROWING even if individual "
@@ -217,12 +468,10 @@ class RevenueExtractor:
             )
 
         text = (
-            f"Revenue Trend Summary — {start_date} to {end_date}\n"
-            f"\n"
+            f"Revenue Trend Summary — {start_date} to {end_date}\n\n"
             f"Overall direction: {direction_word}.\n"
             f"Trend slope: {trend_slope:+,.2f} dollars per month "
-            f"(linear regression across {len(monthly_rows)} months).\n"
-            f"\n"
+            f"(linear regression across {len(monthly_rows)} months).\n\n"
             f"Monthly revenue breakdown:\n"
             + "\n".join(mom_lines)
             + f"\n\n{reconciliation}"
@@ -242,31 +491,21 @@ class RevenueExtractor:
         }
 
     def _build_tips_and_extras_doc(self, business_id: int, row: dict) -> dict:
-        """
-        Step 7 NEW: per-month chunk for tips, tax, discounts, GC redemptions.
-
-        Key insight from Step 6: Q_TIPS reliably got "insufficient data"
-        even though tips were in monthly_summary — buried in a
-        comma-separated list. This focused chunk puts the number up
-        front so embedding-based retrieval actually finds it.
-        """
-        period       = row.get("period", "?")
-        visits       = row.get("visit_count", 0)
-        tips         = row.get("total_tips", 0.0)
-        tax          = row.get("total_tax", 0.0)
-        discounts    = row.get("total_discounts", 0.0)
-        gc           = row.get("gc_redemptions", 0.0)
-        avg_tip      = tips / visits if visits else 0.0
+        period    = row.get("period", "?")
+        visits    = row.get("visit_count", 0)
+        tips      = row.get("total_tips", 0.0)
+        tax       = row.get("total_tax", 0.0)
+        discounts = row.get("total_discounts", 0.0)
+        gc        = row.get("gc_redemptions", 0.0)
+        avg_tip   = tips / visits if visits else 0.0
 
         text = (
-            f"Tips and Extra Charges — {period}\n"
-            f"\n"
+            f"Tips and Extra Charges — {period}\n\n"
             f"Tips collected: ${tips:,.2f} "
             f"(average ${avg_tip:.2f} per visit across {visits} visits).\n"
             f"Tax collected: ${tax:,.2f}.\n"
             f"Discounts given (all sources, including manual): ${discounts:,.2f}.\n"
-            f"Gift card redemptions: ${gc:,.2f}.\n"
-            f"\n"
+            f"Gift card redemptions: ${gc:,.2f}.\n\n"
             f"NOTE: 'Discounts' here is the gross discount from any source "
             f"(manual or promo). For promo code impact specifically, see "
             f"the promo_impact document."
@@ -304,8 +543,7 @@ class RevenueExtractor:
             "breakdown":    sorted_rows,
             "text": (
                 f"Payment type breakdown from {start_date} to {end_date}: "
-                + ", ".join(lines)
-                + ". "
+                + ", ".join(lines) + ". "
                 + f"Top payment method: {sorted_rows[0]['payment_type']} "
                   f"at {sorted_rows[0]['pct_of_total']}% of revenue."
             ),
@@ -370,14 +608,7 @@ class RevenueExtractor:
         self, business_id: int, rows: list[dict],
         start_date: date, end_date: date,
     ) -> dict:
-        """
-        Step 7 change: now always emits a doc — with a 'NONE' chunk when
-        the backend returns zero rows. The explicit disambiguation text
-        prevents the AI from substituting 'general discounts' when asked
-        about promo codes specifically.
-        """
         if not rows:
-            # Empty-state chunk — the one we were missing before
             text = (
                 f"Promo code impact from {start_date} to {end_date}: NONE. "
                 f"No promo codes were used during this period. "
@@ -402,7 +633,6 @@ class RevenueExtractor:
                 "text":                 text,
             }
 
-        # Populated case — same as before, just adds period_start metadata
         total_discount = sum(r.get("total_discount_given", 0) for r in rows)
         total_uses     = sum(r.get("times_used", 0) for r in rows)
         lines = [
@@ -458,15 +688,12 @@ class RevenueExtractor:
             ),
         }
 
-    # ── Computed column helpers ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Computed helpers
+    # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
     def _compute_trend_slope(rows: list[dict]) -> float:
-        """
-        Linear regression slope over service_revenue values in time order.
-        Positive = growing, negative = shrinking, 0 = flat.
-        Returns 0.0 if fewer than 2 periods.
-        """
         revenues = [r.get("service_revenue", 0.0) for r in rows]
         if len(revenues) < 2:
             return 0.0
@@ -482,7 +709,6 @@ class RevenueExtractor:
 
     @staticmethod
     def _direction_label(slope: float) -> str:
-        """Canonical label used consistently across all docs."""
         if slope > 0:
             return "up"
         if slope < 0:
@@ -491,13 +717,9 @@ class RevenueExtractor:
 
     @staticmethod
     def _monthly_text(row: dict, trend_slope: float) -> str:
-        """Human-readable embedding text for a monthly summary row."""
         mom = row.get("mom_growth_pct")
         mom_str = f", {mom:+.1f}% vs previous month" if mom is not None else ""
 
-        # Step 7: explicit trend verdict with backend's slope as the
-        # authoritative signal. AI should quote this rather than
-        # recomputing trend from MoM deltas.
         direction = RevenueExtractor._direction_label(trend_slope)
         direction_word = {"up": "GROWING", "down": "DECLINING", "flat": "FLAT"}[direction]
         trend_str = (

@@ -599,7 +599,7 @@ class DocGenerator:
         last_day = monthrange(last.year, last.month)[1]
         end_date = date(last.year, last.month, last_day)
         client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
-        extractor = RevenueExtractor(client=client)
+        extractor = RevenueExtractor(client=client, wh_pool=self._wh._pool)
         return await extractor.run(org_id, start_date, end_date)
 
     async def _fetch_appointments_warehouse_rows(
