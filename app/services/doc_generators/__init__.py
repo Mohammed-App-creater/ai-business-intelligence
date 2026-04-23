@@ -31,6 +31,8 @@ from app.services.doc_generators.domains.clients import generate_client_docs
 from etl.transforms.clients_etl import ClientsExtractor
 from app.services.doc_generators.domains.marketing import generate_marketing_docs
 from etl.transforms.marketing_etl import MarketingExtractor
+from app.services.doc_generators.domains.promos import generate_promo_docs
+from etl.transforms.promos_etl import PromosExtractor
 from app.services.doc_generators.domains.expenses import generate_expenses_docs
 from etl.transforms.expenses_etl import ExpensesExtractor
 
@@ -40,6 +42,7 @@ _DOMAIN_HANDLERS: dict[str, str] = {
     "clients":       "_gen_clients",
     "appointments":  "_gen_appointments",
     "marketing":     "_gen_marketing",
+    "promos":        "_gen_promos",
     "expenses":      "_gen_expenses",
     "reviews":       "_gen_reviews",
     "payments":      "_gen_payments",
@@ -1168,6 +1171,66 @@ class DocGenerator:
             len(warehouse_rows.get("campaign_summary")  or []),
             len(warehouse_rows.get("channel_monthly")   or []),
             len(warehouse_rows.get("promo_attribution") or []),
+        )
+        return (
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
+        )
+
+    async def _fetch_promos_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "monthly":           [],
+                "codes_monthly":     [],
+                "codes_window":      [],
+                "locations_rollup":  [],
+                "locations_by_code": [],
+                "catalog_health":    [],
+                "counts":            {},
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = PromosExtractor(client=client, wh_pool=self._wh._pool)
+        return await extractor.run(
+            business_id=org_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    async def _gen_promos(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        warehouse_rows = await self._fetch_promos_warehouse_rows(
+            org_id, period_start, months
+        )
+        result = await generate_promo_docs(
+            org_id=org_id,
+            warehouse_rows=warehouse_rows,
+            embedding_client=self._emb,
+            vector_store=self._vs,
+            force=force,
+        )
+        counts = warehouse_rows.get("counts") or {}
+        self._logger.info(
+            "promos ETL complete for org=%d — monthly=%d codes_m=%d codes_w=%d "
+            "locs_r=%d locs_bc=%d catalog=%d",
+            org_id,
+            counts.get("monthly", 0),
+            counts.get("codes_monthly", 0),
+            counts.get("codes_window", 0),
+            counts.get("locations_rollup", 0),
+            counts.get("locations_by_code", 0),
+            counts.get("catalog_health", 0),
         )
         return (
             result["docs_created"],

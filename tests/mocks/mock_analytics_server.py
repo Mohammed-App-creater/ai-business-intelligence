@@ -304,12 +304,16 @@ EXPENSES_PATHS = [
     "/api/v1/leo/expenses/category-location-cross",
 ]
 
-# ── Promos endpoints (2 standard + 2 shape-switched) ── NEW ───────────────────
-# /codes and /locations are registered via custom handlers (below) because
-# they switch shape based on a request-body parameter (granularity / shape).
+# ── Promos endpoints (4 standard + 2 shape-switched) ── NEW ───────────────────
+# /codes and /locations also get custom handlers (below) that switch shape
+# based on a request-body parameter (granularity / shape). The -window and
+# -by-code paths are also registered directly because the real client POSTs
+# to them as distinct endpoints.
 PROMOS_STANDARD_PATHS = [
     "/api/v1/leo/promos/monthly",
     "/api/v1/leo/promos/catalog-health",
+    "/api/v1/leo/promos/codes-window",
+    "/api/v1/leo/promos/locations-by-code",
 ]
 
 ALL_PATHS = (
@@ -362,8 +366,8 @@ async def health():
             "clients":      len(CLIENTS_PATHS),
             "marketing":    len(MARKETING_PATHS),
             "expenses":     len(EXPENSES_PATHS),
-            "promos":       len(PROMOS_STANDARD_PATHS) + 2,   # +2 for shape-switched
-            "total":        len(ALL_PATHS) + 3,   # +1 staff-perf, +2 promos
+            "promos":       len(PROMOS_STANDARD_PATHS) + 2,   # +2 for shape-switched /codes and /locations
+            "total":        len(ALL_PATHS) + 3,   # +1 staff-perf, +2 shape-switched promos
         },
     }
 
@@ -453,7 +457,7 @@ if __name__ == "__main__":
     for p in EXPENSES_PATHS:
         print(f"  POST {p}")
     print()
-    print("Promos endpoints (4):")   # NEW
+    print("Promos endpoints (6):")   # NEW
     for p in PROMOS_STANDARD_PATHS:
         print(f"  POST {p}")
     print("  POST /api/v1/leo/promos/codes      {granularity: 'monthly'|'window'}")

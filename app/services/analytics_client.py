@@ -92,7 +92,7 @@ class AnalyticsClient:
     Sprint 6  — marketing    ✅
     Sprint 7  — memberships  ⬜
     Sprint 8  — giftcards    ⬜
-    Sprint 9  — promos       ⬜
+    Sprint 9  — promos       ✅
     Sprint 10 — expenses     ✅
     Sprint 11 — forms        ⬜
     """
@@ -977,6 +977,174 @@ class AnalyticsClient:
             payload,
         )
         return body.get("data", [])
+
+    # ── PROMOS DOMAIN ─────────────────────────────────────────────────────────
+    # 6 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 8 — promos
+
+    async def get_promos_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP1 — Per-period promo rollup.
+
+        Returns one row per month in window with org-wide redemption totals,
+        discount totals, distinct codes used, and promo-visit-pct of all visits.
+
+        Powers Q1, Q2, Q4-Q8, Q12, Q26.
+
+        Key fields returned per row:
+            period_month (YYYY-MM-DD), total_visits, promo_redemptions,
+            distinct_codes_used, promo_visit_pct, total_discount_given,
+            avg_discount_per_redemption,
+            prev_month_redemptions, prev_month_discount
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/promos/monthly", payload)
+
+    async def get_promos_codes_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP2A — Per-code per-period redemption stats.
+
+        Returns one row per (period × code) where activity exists. Each row
+        carries promo metadata (code string, label, Amount metadata, active
+        flag, expiration) plus redemption metrics.
+
+        Powers Q9, Q11, Q13, Q14, Q15, Q24, Q25.
+
+        Orphan handling (Step 2 N1): rows for promo IDs that exist in
+        tbl_visit but NOT in tbl_promo arrive with promo_code_string=NULL,
+        promo_label=NULL. Pass through unchanged — the doc generator
+        renders these as 'unknown promo (ID #N)'.
+
+        Key fields returned per row:
+            period_month, promo_id, promo_code_string, promo_label,
+            promo_amount_metadata, is_active, expiration_date,
+            redemptions, total_discount, avg_discount, max_single_discount
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/promos/codes", payload)
+
+    async def get_promos_codes_window(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP2B — Per-code window-total snapshot (no period grain).
+
+        Returns one row per code with full-window aggregates. Includes
+        is_expired_now (snapshot of expiration vs ref date) for the
+        active-but-expired data quality flag.
+
+        Powers Q3, Q10.
+
+        Key fields returned per row:
+            promo_id, promo_code_string, promo_label, promo_amount_metadata,
+            is_active, expiration_date, is_expired_now,
+            redemptions, total_discount, avg_discount, max_single_discount
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/promos/codes-window", payload)
+
+    async def get_promos_locations_rollup(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP3A — Per-location per-period rollup (codes aggregated).
+
+        Returns one row per (period × location) — total promo activity
+        at that location for that month, summed across all promo codes.
+
+        Powers Q18, Q19 (count side), Q20, Q21 (amount side).
+
+        Key fields returned per row:
+            period_month, location_id, location_name,
+            total_promo_redemptions, distinct_codes_used,
+            total_discount_given, avg_discount_per_redemption
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/promos/locations", payload)
+
+    async def get_promos_locations_by_code(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP3B — Per-location per-code per-period detail.
+
+        Returns one row per (period × location × code). Used for "which
+        promo runs heavy at which branch" type questions.
+
+        Powers Q18-Q21 (per-code variants).
+
+        Key fields returned per row:
+            period_month, location_id, location_name,
+            promo_id, promo_code_string, promo_label,
+            redemptions, total_discount, avg_discount
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/promos/locations-by-code", payload)
+
+    async def get_promos_catalog_health(
+        self,
+        business_id: int,
+    ) -> list[dict]:
+        """
+        EP4 — Catalog-level snapshot (point-in-time, no date range).
+
+        Returns one row per catalog code with health flags:
+          - is_expired           : expiration_date < snapshot_date
+          - active_but_expired   : is_active=1 AND is_expired=1 (data quality issue)
+          - is_dormant           : zero redemptions in last 90d
+
+        Powers Q22, Q23.
+
+        Key fields returned per row:
+            promo_id, promo_code_string, promo_label,
+            is_active, expiration_date,
+            is_expired, active_but_expired,
+            redemptions_last_90d, is_dormant,
+            snapshot_date
+        """
+        payload = {
+            "business_id": business_id,
+        }
+        return await self._post("/api/v1/leo/promos/catalog-health", payload)
 
     # ── EXPENSES DOMAIN ───────────────────────────────────────────────────────
     # 6 endpoints, same POST + JSON body pattern as all other domains.

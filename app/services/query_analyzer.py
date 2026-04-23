@@ -119,6 +119,104 @@ REVENUE_KEYWORD_GROUP: dict[str, list[str]] = {
     ]
 }
 
+PROMOS_KEYWORDS: list[str] = [
+    # ── Core domain vocabulary ────────────────────────────────────────────
+    "promo", "promos", "promotion", "promotions",
+    "promo code", "promo codes",
+    "coupon", "coupons", "coupon code", "coupon codes",
+    "discount", "discounts", "discounting",
+    "redemption", "redemptions", "redeemed", "redeem",
+    "offer", "offers",
+    "deal", "deals",
+    "savings",
+
+    # ── Specific code references (from the real biz-42 catalog) ──────────
+    "dm8880", "pm8880", "awan", "pofl99", "dm881", "DM8880", "PM8880", "Awan", "POFL99", "DM881",
+
+    # ── Count / volume questions (Q1, Q9, Q10, Q13) ──────────────────────
+    "how many promos", "how many redemptions", "how many coupons",
+    "promo count", "redemption count",
+    "most redeemed", "most popular promo", "most used promo",
+    "most used code", "top promo", "top promo code",
+    "top coupon", "best promo",
+    "least redeemed", "least used", "rarely used",
+
+    # ── Amount / dollar questions (Q2, Q4, Q11, Q15, Q24, Q25) ───────────
+    "total discount", "total discounts", "total discount given",
+    "discount given", "total savings",
+    "biggest discount", "largest discount", "biggest single discount",
+    "average discount", "avg discount", "average discount per",
+    "discount per redemption", "average coupon savings",
+    "how much did we discount", "how much in discounts",
+    "discount amount", "discount total",
+    "promo cost", "cost of promos", "what did promos cost",
+
+    # ── Distinct codes & catalog (Q3, Q22, Q23) ──────────────────────────
+    "distinct codes", "distinct promos", "different codes",
+    "different promos", "how many codes", "how many promo codes",
+    "active promos", "active promo codes", "inactive promo",
+    "expired promo", "expired code", "expired promo code",
+    "expiring soon",
+    "active but expired", "active-but-expired",
+    "dormant promo", "dormant code", "dormant promo code",
+    "unused promo", "unused code", "stale promo", "stale code",
+    "which codes should I retire",
+    "promos i am not using", "codes i am not using",
+    "retire code", "retire promo", "deactivate promo",
+
+    # ── Trend / temporal questions (Q5-Q8, Q12, Q26) ─────────────────────
+    "promo trend", "promo activity",
+    "redemption trend", "coupon usage trend",
+    "promos last month", "promos this month",
+    "promos this year", "promo usage ytd",
+    "promo usage over time", "promo volume over time",
+    "best month for promos", "worst month for promos",
+    "peak promo month",
+    "promo visit percentage", "promo visit pct",
+    "% of visits with promo", "percent of visits using promo",
+    "visits using promos", "visits with a promo",
+    "percent of customers using promo", "customers using promos",
+
+    # ── Root cause questions (Q14, Q15) ──────────────────────────────────
+    "why did promo", "why did redemptions",
+    "why did discounts spike", "why did discount spike",
+    "why more promos", "why fewer promos",
+    "promo spike", "redemption spike", "discount spike",
+    "promo drop", "redemption drop",
+    "which code drove", "which promo drove",
+    "which promo jumped", "which promo fell",
+
+    # ── Location / branch questions (Q18-Q21) ────────────────────────────
+    "promos by location", "promos per location",
+    "promos by branch", "promos per branch",
+    "promo redemption by location", "promo redemption per location",
+    "discount by location", "discount per location",
+    "discount by branch", "discount per branch",
+    "which location redeems", "which branch redeems",
+    "which branch gives the most discount",
+    "which location gives the most discount",
+    "main street promos", "westside promos",
+    "main st promos", "westside coupons",
+    "branch promo", "location promo",
+
+    # ── Lifecycle / code-level questions (Q22, Q23) ──────────────────────
+    "promo expired",
+    "promo still active",
+    "code lifecycle",
+
+    # ── Advice questions (Q16, Q17) ──────────────────────────────────────
+    "should I retire promo", "should we retire promo",
+    "which promos to keep", "which promos to stop",
+    "promo strategy", "coupon strategy",
+    "promo recommendation", "promo advice",
+
+    # ── Data integrity / edge cases (Q24-Q26) ────────────────────────────
+    "unknown promo code", "orphan promo",
+    "promo without a code",
+    "promos on refunded visits", "promos on cancelled visits",
+    "avg discount per redemption",
+]
+
 RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
     "financial": REVENUE_KEYWORD_GROUP["financial"],
     "appointments": [
@@ -569,6 +667,7 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "underperform", "underperformed",
         "why did my campaign", "what went wrong with campaign",
     ],
+    "promos": PROMOS_KEYWORDS,
     "analytics": [
         "report", "reports", "analytics", "analysis", "breakdown",
         "summary", "overview", "dashboard", "metric", "metrics", "kpi",
@@ -758,6 +857,19 @@ class QueryAnalyzer:
             # → multi-domain search → top_k_per_domain=3 → thin context → no answer
             "all staff members", "each staff member", "per staff member",
             "staff member's revenue", "staff working at",
+
+            # ── Promos domain (Sprint 8) ──────────────────────────────────────
+            "discount per redemption", "avg discount per redemption",
+            "average discount per redemption",
+            "total discount given", "biggest single discount",
+            "most redeemed promo", "most redeemed code", "most redeemed coupon",
+            "least redeemed promo", "least redeemed code",
+            "promo visit percentage", "promo visit pct",
+            "percent of visits using promo", "% of visits with promo",
+            "redemption count", "redemption rate",
+            "per promo code", "per coupon code", "by promo code",
+            "by coupon", "by promo", "per promo", "per coupon",
+            "distinct promo codes", "distinct coupons", "distinct promos",
         ]
         if any(phrase in q_lower for phrase in _DATA_METRIC_OVERRIDES):
             matched = [p for p in _DATA_METRIC_OVERRIDES if p in q_lower]

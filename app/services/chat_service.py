@@ -75,11 +75,13 @@ _PII_NAME_LOOKUP_PATTERNS: list[re.Pattern[str]] = [
         r"(?:[.?!]|\s*$)"
     ),
 
-    # "Jane Smith's visits/spend/history/profile/info/balance/points"
+    # "Jane Smith's visits/spend/history/profile/info/balance/points/submissions"
     re.compile(
         r"\b[A-Z][a-z]{2,}\s+[A-Z][a-z]{2,}'s\s+"
         r"(?i:spend|spending|visits?|history|profile|contact|info|details|"
-        r"balance|points|total|revenue|appointments?|bookings?)\b"
+        r"balance|points|total|revenue|appointments?|bookings?|"
+        r"submissions?|entries|entry|records?|logs?|expenses?|transactions?|"
+        r"activity|habits|patterns?|behaviou?r|performance)\b"
     ),
 
     # "What did Jane Smith spend/buy/visit/book"
@@ -294,11 +296,17 @@ class ChatService:
             since_date=since_date,
         )
 
-        # 3. Build RagChatData with retrieved documents
+        # 3. Build RagChatData with retrieved documents.
+        #    analysis_period gives the LLM concrete period anchoring —
+        #    without it, "last month" / "this quarter" / "this year"
+        #    lose their time reference and the LLM picks wrong chunks.
+        analysis_period = self._format_analysis_period(
+            since_date, request.question,
+        )
         rag_data = RagChatData(
             business_id=request.business_id,
             business_type=self._business_type,
-            analysis_period="Recent",  # TODO: infer from question
+            analysis_period=analysis_period,
             question=request.question,
             documents=ctx.documents,
         )
@@ -330,6 +338,65 @@ class ChatService:
             conversation_id=request.conversation_id,
             latency_ms=latency,
         )
+
+    # ------------------------------------------------------------------
+    # Analysis period formatting — anchors the LLM in real time
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _format_analysis_period(since_date: Any, question: str) -> str:
+        """
+        Build the `analysis_period` string passed into the RAG prompt.
+
+        This gives the LLM explicit awareness of:
+          • Today's date (so "last month", "this quarter" mean something)
+          • The parsed `since_date` window (what data was retrieved)
+          • Key derived periods ("last month", "this month", etc.)
+
+        Without this, the LLM receives ``analysis_period="Recent"`` and
+        has no idea whether "last month" means Feb or March or July.
+        """
+        from datetime import date, timedelta
+
+        today = date.today()
+
+        # Compute "last month" — first day of prior month to last day of prior month
+        first_of_this_month = today.replace(day=1)
+        last_day_prev_month = first_of_this_month - timedelta(days=1)
+        first_of_prev_month = last_day_prev_month.replace(day=1)
+
+        # Compute "this quarter" / "last quarter"
+        q = (today.month - 1) // 3 + 1
+        q_start_month = (q - 1) * 3 + 1
+        this_quarter_start = date(today.year, q_start_month, 1)
+        last_quarter_start = (
+            date(today.year - 1, 10, 1) if q == 1
+            else date(today.year, q_start_month - 3, 1)
+        )
+        last_quarter_end = this_quarter_start - timedelta(days=1)
+
+        # "This year" window
+        this_year_start = date(today.year, 1, 1)
+
+        parts = [
+            f"Today is {today.isoformat()} ({today.strftime('%A, %B %d, %Y')}).",
+            f"\"This month\" = {today.strftime('%B %Y')} (partial, in progress).",
+            f"\"Last month\" = {first_of_prev_month.strftime('%B %Y')} "
+            f"({first_of_prev_month.isoformat()} to {last_day_prev_month.isoformat()}).",
+            f"\"This quarter\" = Q{q} {today.year} "
+            f"(started {this_quarter_start.isoformat()}).",
+            f"\"Last quarter\" = Q{((q - 2) % 4) + 1} "
+            f"{this_quarter_start.year - (1 if q == 1 else 0)} "
+            f"({last_quarter_start.isoformat()} to {last_quarter_end.isoformat()}).",
+            f"\"This year\" / YTD = {this_year_start.isoformat()} to {today.isoformat()}.",
+        ]
+
+        if since_date is not None:
+            parts.append(
+                f"Retrieved documents cover: {since_date.isoformat()} onward."
+            )
+
+        return " ".join(parts)
 
     # ------------------------------------------------------------------
     # Live-data detection (stopgap — moves to QueryAnalyzer later)

@@ -38,13 +38,14 @@ KEYWORD_GROUP_TO_DOMAINS: dict[str, list[str] | None] = {
     "staff":            ["staff"],
     "services":         ["services"],
     "marketing":        ["marketing", "campaigns"],
+    "promos":           ["promos"],
     "analytics":        None,   # broad question → search all domains
     "time_comparisons": None,   # modifier, not a domain by itself
 }
 
 ALL_DOMAINS: list[str] = [
     "revenue", "staff", "services", "clients", "appointments",
-    "marketing",
+    "marketing", "promos",
     "expenses", "reviews", "payments", "campaigns",
     "attendance", "subscriptions",
 ]
@@ -57,6 +58,8 @@ _LOCATION_COMPARE_PHRASES: list[str] = [
     "location appointment volume",
     "by location",
     "per location",
+    "by branch",
+    "per branch",
     "between main",
     "between our",
     "between the",
