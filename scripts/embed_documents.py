@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from datetime import date
 
 from app.services.db.db_pool import PGPool, PGTarget
 from app.services.db.warehouse_client import WarehouseClient
@@ -56,7 +57,18 @@ async def run(args) -> None:
             )
         org_ids = [r["business_id"] for r in rows]
 
-    logging.info("embed_documents | orgs=%d | months=%d", len(org_ids), args.months)
+    # Compute months from explicit dates if given, else use --months
+    if args.start_date:
+        end = args.end_date or date.today()
+        # +1 because inclusive: Jan→Mar = 3 months, not 2
+        months = (end.year - args.start_date.year) * 12 + (end.month - args.start_date.month) + 1
+        logging.info(
+            "embed_documents | explicit window %s → %s (%d months)",
+            args.start_date, end, months,
+        )
+    else:
+        months = args.months
+        logging.info("embed_documents | orgs=%d | months=%d (relative)", len(org_ids), months)
 
     if args.dry_run:
         logging.info("embed_documents dry-run — skipping generation")
@@ -71,8 +83,8 @@ async def run(args) -> None:
         gen = DocGenerator(wh, gateway, emb, vs)
         result = await gen.generate_all(
             org_id=org_id,
-            period_start=None,
-            months=args.months,
+            period_start=args.start_date,
+            months=months,
             domain=args.domain,
             force=args.force,
         )
@@ -102,11 +114,21 @@ def main():
     )
     parser = argparse.ArgumentParser(description="Generate + embed warehouse documents")
     parser.add_argument("--org-id",  type=int,  default=None)
-    parser.add_argument("--months",  type=int,  default=3)
+    parser.add_argument("--months",  type=int,  default=3,
+                        help="Months back from today (ignored if --start-date is provided)")
+    parser.add_argument("--start-date", type=date.fromisoformat, default=None,
+                        help="Explicit window start (YYYY-MM-DD). If set, --months is ignored.")
+    parser.add_argument("--end-date",   type=date.fromisoformat, default=None,
+                        help="Explicit window end (YYYY-MM-DD). Defaults to today when --start-date is used.")
     parser.add_argument("--domain",  type=str,  default=None)
     parser.add_argument("--force",   action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    # Validate: --end-date alone is nonsense, --start-date alone is fine (end defaults to today)
+    if args.end_date and not args.start_date:
+        parser.error("--end-date requires --start-date")
+
     asyncio.run(run(args))
 
 

@@ -3,7 +3,7 @@ app/services/doc_generator/domains/revenue.py
 =============================================
 Revenue domain document handler for DocGenerator.
 
-Reads the 6 revenue document types produced by the ETL extractor
+Reads the revenue document types produced by the ETL extractor
 from the analytics warehouse, generates human-readable chunk_text
 for each one, and stores embeddings in pgvector.
 
@@ -16,6 +16,8 @@ Document types handled:
     location_revenue        → one doc per location per period
     promo_impact            → one aggregate doc
     failed_refunds          → one aggregate doc
+    trend_summary           → overall-window trend verdict (Step 7)
+    tips_and_extras         → per-month tips/tax/discounts/gc (Step 7)
 """
 
 from __future__ import annotations
@@ -38,6 +40,9 @@ REVENUE_DOC_TYPES = {
     "location_revenue",
     "promo_impact",
     "failed_refunds",
+    # Step 7 additions — keep in sync with etl/transforms/revenue_etl.py
+    "trend_summary",
+    "tips_and_extras",
 }
 
 
@@ -177,13 +182,68 @@ def _chunk_failed_refunds(row: dict) -> str:
     )
 
 
+def _chunk_trend_summary(row: dict) -> str:
+    """
+    Overall-window trend verdict. Step 7: answers 'is revenue up or down?'
+    by stating the backend's linear-regression slope authoritatively, so
+    the AI doesn't compute its own trend from a single month-to-month
+    delta and contradict the underlying data.
+    """
+    # The transformer already wrote a thorough `text` field — use it directly.
+    # That text is carefully crafted with reconciliation guidance.
+    text = row.get("text")
+    if text:
+        return text
+
+    # Fallback — compose from structured fields if text is missing
+    period_start = row.get("period_start") or row.get("period", "unknown")
+    period_end = row.get("period_end") or row.get("period", "unknown")
+    slope = row.get("trend_slope", 0)
+    direction = row.get("trend_direction", "flat")
+    direction_word = {"up": "GROWING", "down": "DECLINING", "flat": "FLAT"}.get(
+        direction, "FLAT"
+    )
+    return (
+        f"Revenue Trend Summary — {period_start} to {period_end}\n"
+        f"Overall direction: {direction_word}.\n"
+        f"Trend slope: {slope:+,.2f} dollars per month."
+    )
+
+
+def _chunk_tips_and_extras(row: dict) -> str:
+    """
+    Per-month tips / tax / discounts / gc_redemptions. Step 7: surfaces
+    tips as a retrievable chunk instead of being buried in a comma list
+    inside monthly_summary.
+    """
+    # Prefer the transformer's crafted text (has the disambiguation note)
+    text = row.get("text")
+    if text:
+        return text
+
+    # Fallback
+    period = row.get("period", "unknown")
+    tips = row.get("tips", 0.0)
+    tax = row.get("tax", 0.0)
+    disc = row.get("discounts", 0.0)
+    gc = row.get("gc_redemptions", 0.0)
+    return (
+        f"Tips and Extra Charges — {period}\n"
+        f"Tips collected: ${tips:,.2f}. Tax: ${tax:,.2f}. "
+        f"Discounts: ${disc:,.2f}. Gift card redemptions: ${gc:,.2f}."
+    )
+
+
 CHUNK_GENERATORS = {
-    "monthly_summary":        _chunk_monthly_summary,
+    "monthly_summary": _chunk_monthly_summary,
     "payment_type_breakdown": _chunk_payment_type_breakdown,
-    "staff_revenue":          _chunk_staff_revenue,
-    "location_revenue":       _chunk_location_revenue,
-    "promo_impact":           _chunk_promo_impact,
-    "failed_refunds":         _chunk_failed_refunds,
+    "staff_revenue": _chunk_staff_revenue,
+    "location_revenue": _chunk_location_revenue,
+    "promo_impact": _chunk_promo_impact,
+    "failed_refunds": _chunk_failed_refunds,
+    # Step 7 additions
+    "trend_summary": _chunk_trend_summary,
+    "tips_and_extras": _chunk_tips_and_extras,
 }
 
 
@@ -251,7 +311,14 @@ async def generate_revenue_docs(
         doc_type = row.get("doc_type")
 
         if doc_type not in REVENUE_DOC_TYPES:
-            logger.debug("revenue handler: skipping unknown doc_type=%s", doc_type)
+            logger.warning(
+                "revenue handler: UNHANDLED doc_type=%s (org=%d). "
+                "Doc dropped — update REVENUE_DOC_TYPES and CHUNK_GENERATORS "
+                "in this file to handle it.",
+                doc_type,
+                org_id,
+            )
+            failed += 1
             continue
 
         doc_id = _make_doc_id(org_id, doc_type, row)
@@ -276,11 +343,13 @@ async def generate_revenue_docs(
 
             # Build metadata stored alongside the vector
             metadata = {
-                "org_id":    org_id,
-                "doc_type":  doc_type,
-                "domain":    DOMAIN,
-                "period":    row.get("period"),
-                "emp_id":    row.get("emp_id"),
+                "org_id": org_id,
+                "doc_type": doc_type,
+                "domain": DOMAIN,
+                "period": row.get("period"),
+                "period_start": row.get("period_start"),
+                "period_end": row.get("period_end"),
+                "emp_id": row.get("emp_id"),
                 "location_id": row.get("location_id"),
             }
 

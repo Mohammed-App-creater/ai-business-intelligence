@@ -166,3 +166,58 @@ Content-Type: application/json
 }
 
 # Mock accepts business_id: 42, 99, or 101 only (others → 403).
+
+
+### Chat API — revenue / trend / staff / promo / advice (org 40)
+POST http://localhost:8000/api/v1/chat
+Content-Type: application/json
+
+{
+  "business_id": "40",
+  "org_id": "40",
+  "question": "What was my revenue in February 2026?"
+}
+
+
+###
+POST http://localhost:8000/api/v1/chat
+Content-Type: application/json
+
+{
+  "business_id": "40",
+  "org_id": "40",
+  "question": "Is my revenue trending up or down over the last 3 months?"
+}
+
+
+###
+POST http://localhost:8000/api/v1/chat
+Content-Type: application/json
+
+{
+  "business_id": "40",
+  "org_id": "40",
+  "question": "Which staff member generated the most revenue in Q1 2026?"
+}
+
+
+###
+POST http://localhost:8000/api/v1/chat
+Content-Type: application/json
+
+{
+  "business_id": "40",
+  "org_id": "40",
+  "question": "How much did promo codes cost me in discounts during Q1 2026?"
+}
+
+
+###
+POST http://localhost:8000/api/v1/chat
+Content-Type: application/json
+
+{
+  "business_id": "40",
+  "org_id": "40",
+  "question": "Should I be worried about my revenue trend?"
+}
