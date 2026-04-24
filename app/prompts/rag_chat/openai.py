@@ -18,29 +18,74 @@ from __future__ import annotations
 
 from ..types import RagChatData
 
-SYSTEM_PROMPT = """\
+def _build_system_prompt() -> str:
+    """
+    Build the system prompt with today's date injected.
+
+    Today's date is computed at request time so the LLM always has correct
+    temporal context. The Temporal Context block lets the LLM map relative
+    phrases ("last month", "this quarter") to absolute periods.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    first_of_this_month = today.replace(day=1)
+    last_day_prev_month = first_of_this_month - timedelta(days=1)
+    first_of_prev_month = last_day_prev_month.replace(day=1)
+    q = (today.month - 1) // 3 + 1
+    last_q = q - 1 if q > 1 else 4
+    last_q_year = today.year if q > 1 else today.year - 1
+
+    return f"""\
 You are an expert business analytics assistant for beauty and wellness businesses \
 (salons, spas, barbershops, nail studios).
 
-Instructions:
+## Temporal Context
+Today is {today.strftime('%A, %B %d, %Y')} ({today.isoformat()}).
+- "This month"   = {today.strftime('%B %Y')} (in progress, partial data only)
+- "Last month"   = {first_of_prev_month.strftime('%B %Y')}
+- "This quarter" = Q{q} {today.year}
+- "Last quarter" = Q{last_q} {last_q_year}
+- "This year" / "YTD" = January 1, {today.year} through today
+
+The "Period" field in Business Context tells you which specific period the
+user is asking about. Focus on that period when answering.
+
+## Instructions
 - Analyse ONLY the data provided in the prompt. Do not invent figures or trends.
-- If the data is insufficient, say so — do not guess.
+- The retrieved documents have been pre-filtered to match the Period in
+  Business Context. Trust them — if a document covers the period being asked
+  about, use it. Do not refuse just because no document mentions today's date
+  or another period.
+- If, after consulting the retrieved documents, the data genuinely does not
+  contain what was asked (e.g., the user asks about a metric the documents do
+  not report), say so — do not guess.
 - Respond with a JSON object using this schema:
-  {
+  {{
     "summary": "One-sentence direct answer",
     "root_causes": ["cause 1", "cause 2"],
     "supporting_data": "Key figures supporting the analysis",
     "recommendations": ["action 1", "action 2", "action 3"],
     "confidence": "high | medium | low",
     "data_gaps": "Missing data that would help, or null"
-  }"""
+  }}"""
+
+
+# Backward-compatible alias — kept so any downstream code that imports
+# SYSTEM_PROMPT as a constant doesn't break. Computed once at import time;
+# build() always calls _build_system_prompt() fresh.
+SYSTEM_PROMPT = _build_system_prompt()
 
 
 def build(data: RagChatData) -> tuple[str, str]:
     """
     Returns (system, user) ready for gateway.call(UseCase.RAG_CHAT, ...).
     response_format=json_object applied by provider automatically.
+
+    System prompt is rebuilt per-request so today's-date context in
+    Temporal Context reflects the actual request time.
     """
+    system_prompt = _build_system_prompt()
     sections = []
 
     sections.append(
@@ -73,7 +118,7 @@ def build(data: RagChatData) -> tuple[str, str]:
     sections.append(f"## Question\n{data.question.strip()}")
 
     user = "\n\n".join(sections)
-    return SYSTEM_PROMPT, user
+    return system_prompt, user
 
 
 # ---------------------------------------------------------------------------

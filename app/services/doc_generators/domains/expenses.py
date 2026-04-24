@@ -53,6 +53,7 @@ EXPENSES_DOC_TYPES = {
     "exp_staff_attribution",
     "exp_cat_location_cross",
     "exp_dormant_category",
+    "exp_data_quality_notes",   # Grain-limitation notice (honesty chunk)
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -326,6 +327,40 @@ def _chunk_dormant_category(row: dict) -> str:
     )
 
 
+def _chunk_data_quality_notes(business_id: int) -> str:
+    """
+    Build the per-tenant data-quality notice chunk. Surfaces grain
+    limitations so the LLM answers honestly instead of hallucinating
+    when asked about duplicate / individual-transaction analysis.
+    """
+    return (
+        f"Data-quality and grain notes for business_id={business_id}. "
+        "The expense data in this knowledge base is aggregated at MONTHLY "
+        "grain — each document summarises one month of expenses by "
+        "category, subcategory, location, payment type, or staff logger. "
+        "Individual transaction-level data (specific expense entries, "
+        "timestamps, amounts per transaction, notes, receipt identifiers) "
+        "is NOT embedded in this knowledge base. "
+        "Because of this grain limitation, the following analyses CANNOT "
+        "be performed from the embedded documents: "
+        "duplicate-expense detection, identical-entry detection, "
+        "same-day double-logging detection, per-transaction anomaly "
+        "detection, mistake-entry identification, data-entry-error review. "
+        "If a user asks about duplicates, mistakes, or entry-level "
+        "anomalies, the correct honest answer is: "
+        "\"I can't detect duplicates or individual-transaction mistakes "
+        "from the monthly aggregates I have — that analysis requires "
+        "transaction-level data which is not available in my current "
+        "knowledge base. You would need to audit the underlying expense "
+        "log directly (e.g. through your accounting software's transaction "
+        "list) to spot duplicates or entry errors.\" "
+        "Related vocabulary this chunk should answer: duplicate expenses, "
+        "duplicate entries, double-counted, mistake entries, miscategorized, "
+        "wrong category, entry errors, data entry mistakes, "
+        "individual transactions, transaction-level detail, audit entries."
+    )
+
+
 CHUNK_GENERATORS = {
     "exp_monthly_summary":      _chunk_monthly_summary,
     "exp_category_monthly":     _chunk_category_monthly,
@@ -552,6 +587,18 @@ async def generate_expenses_docs(
             "expenses doc_gen: org=%d detected %d dormant categor%s",
             org_id, len(dormant_rows), "y" if len(dormant_rows) == 1 else "ies",
         )
+
+    # 8b. Data-quality / grain-limitation notice — one per tenant
+    # Tells the LLM honestly what this knowledge base CANNOT answer
+    # (duplicate detection, individual-transaction analysis).
+    all_chunks.append(_make_chunk(
+        org_id=org_id,
+        doc_type="exp_data_quality_notes",
+        row={"business_id": org_id},
+        text=_chunk_data_quality_notes(org_id),
+        period_start=None,   # not period-scoped
+        metadata={"scope": "tenant_wide"},
+    ))
 
     # 9. Embed + store
     if not all_chunks:

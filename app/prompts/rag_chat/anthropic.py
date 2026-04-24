@@ -18,17 +18,52 @@ from __future__ import annotations
 
 from ..types import RagChatData, RevenueEntry
 
-SYSTEM_PROMPT = """\
+def _build_system_prompt() -> str:
+    """
+    Build the system prompt with today's date injected.
+
+    Today's date is computed at request time so the LLM always has correct
+    temporal context. The <temporal_context> block lets the LLM map relative
+    phrases ("last month", "this quarter") to absolute periods.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    first_of_this_month = today.replace(day=1)
+    last_day_prev_month = first_of_this_month - timedelta(days=1)
+    first_of_prev_month = last_day_prev_month.replace(day=1)
+    q = (today.month - 1) // 3 + 1
+    last_q = q - 1 if q > 1 else 4
+    last_q_year = today.year if q > 1 else today.year - 1
+
+    return f"""\
 <role>
 You are an expert business analytics assistant for beauty and wellness businesses
 (salons, spas, barbershops, nail studios). Your role is to analyse business data
 and provide clear, accurate, and actionable insights to business owners.
 </role>
 
+<temporal_context>
+Today's date is {today.strftime('%A, %B %d, %Y')} ({today.isoformat()}).
+- "This month"   = {today.strftime('%B %Y')} (in progress, partial data only)
+- "Last month"   = {first_of_prev_month.strftime('%B %Y')}
+- "This quarter" = Q{q} {today.year}
+- "Last quarter" = Q{last_q} {last_q_year}
+- "This year" / "YTD" = January 1, {today.year} through today
+The "Analysis Period" field in <business_context> tells you which specific
+period the user is asking about. Focus on that period when answering.
+</temporal_context>
+
 <rules>
 - Base ALL analysis strictly on data inside <business_data> tags.
 - Do NOT invent figures, trends, or comparisons not present in the data.
-- If the data is insufficient to answer, say so explicitly — do not guess.
+- The retrieved documents have been pre-filtered to match the Analysis Period
+  in <business_context>. Trust them — if a document covers the period being
+  asked about, use it. Do not refuse just because no document mentions today's
+  date or another period.
+- If, after consulting the retrieved documents, the data genuinely does not
+  contain what was asked (e.g., the user asks about a metric that the
+  documents simply do not report), say so explicitly — do not guess.
 - Reason step-by-step before writing your final answer.
 - Respond ONLY with the JSON object defined in <output_format>.
 - Do not include any text outside the JSON object.
@@ -36,10 +71,21 @@ and provide clear, accurate, and actionable insights to business owners.
 </rules>"""
 
 
+# Backward-compatible alias — kept so any downstream code that imports
+# SYSTEM_PROMPT as a constant doesn't break. Computed once at import time
+# (today's date for module-import call); build() always calls _build_system_prompt()
+# fresh so live requests always get the current date.
+SYSTEM_PROMPT = _build_system_prompt()
+
+
 def build(data: RagChatData) -> tuple[str, str]:
     """
     Returns (system, user) ready for gateway.call(UseCase.RAG_CHAT, ...).
+
+    System prompt is rebuilt per-request so today's-date context in
+    <temporal_context> reflects the actual request time.
     """
+    system_prompt = _build_system_prompt()
     sections = []
 
     # MVP path — retrieved documents from vector store
@@ -74,7 +120,7 @@ def build(data: RagChatData) -> tuple[str, str]:
         _output_format(),
     ]))
 
-    return SYSTEM_PROMPT, user
+    return system_prompt, user
 
 
 # ---------------------------------------------------------------------------

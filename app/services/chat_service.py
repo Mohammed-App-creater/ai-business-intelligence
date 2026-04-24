@@ -346,57 +346,87 @@ class ChatService:
     @staticmethod
     def _format_analysis_period(since_date: Any, question: str) -> str:
         """
-        Build the `analysis_period` string passed into the RAG prompt.
+        Build a SHORT `analysis_period` label for the RAG prompt.
 
-        This gives the LLM explicit awareness of:
-          • Today's date (so "last month", "this quarter" mean something)
-          • The parsed `since_date` window (what data was retrieved)
-          • Key derived periods ("last month", "this month", etc.)
+        The field is rendered as a one-line label in both prompt builders
+        (anthropic.py: "Analysis Period: {period}"; openai.py: "- Period:
+        {period}"). It must be a single, focused period name — not a
+        paragraph of competing date facts.
 
-        Without this, the LLM receives ``analysis_period="Recent"`` and
-        has no idea whether "last month" means Feb or March or July.
+        Returns one of:
+          • "March 2026"                      — for "last month"
+          • "April 2026"                      — for "this month"
+          • "Year-to-date 2026"               — for "this year" / "YTD"
+          • "Q1 2026"                         — for "last quarter"
+          • "Q2 2026"                         — for "this quarter" / "QoQ"
+          • "October 2025 to March 2026"      — for "last 6 months"
+          • "from 2026-01-01 onward"          — when since_date is set
+                                                 but no relative phrase matched
+          • "Recent"                          — fallback (prior behavior)
+
+        Today's-date awareness is provided to the LLM via the system
+        prompt (built in app/prompts/rag_chat/), not via this field.
         """
         from datetime import date, timedelta
 
         today = date.today()
+        q_lower = question.lower()
 
-        # Compute "last month" — first day of prior month to last day of prior month
-        first_of_this_month = today.replace(day=1)
-        last_day_prev_month = first_of_this_month - timedelta(days=1)
-        first_of_prev_month = last_day_prev_month.replace(day=1)
+        first_of_this_month  = today.replace(day=1)
+        last_day_prev_month  = first_of_this_month - timedelta(days=1)
+        first_of_prev_month  = last_day_prev_month.replace(day=1)
 
-        # Compute "this quarter" / "last quarter"
-        q = (today.month - 1) // 3 + 1
-        q_start_month = (q - 1) * 3 + 1
-        this_quarter_start = date(today.year, q_start_month, 1)
-        last_quarter_start = (
-            date(today.year - 1, 10, 1) if q == 1
-            else date(today.year, q_start_month - 3, 1)
-        )
-        last_quarter_end = this_quarter_start - timedelta(days=1)
+        # Pattern matches go from most-specific to most-general so a question
+        # like "last quarter vs this quarter" picks "last quarter" first
+        # (the comparison anchor).
+        if "last quarter" in q_lower or "previous quarter" in q_lower:
+            q = (today.month - 1) // 3 + 1
+            last_q = q - 1 if q > 1 else 4
+            last_q_year = today.year if q > 1 else today.year - 1
+            return f"Q{last_q} {last_q_year}"
 
-        # "This year" window
-        this_year_start = date(today.year, 1, 1)
+        if (
+            "this quarter" in q_lower
+            or "qoq" in q_lower
+            or "quarter-over-quarter" in q_lower
+            or "quarter over quarter" in q_lower
+        ):
+            q = (today.month - 1) // 3 + 1
+            return f"Q{q} {today.year}"
 
-        parts = [
-            f"Today is {today.isoformat()} ({today.strftime('%A, %B %d, %Y')}).",
-            f"\"This month\" = {today.strftime('%B %Y')} (partial, in progress).",
-            f"\"Last month\" = {first_of_prev_month.strftime('%B %Y')} "
-            f"({first_of_prev_month.isoformat()} to {last_day_prev_month.isoformat()}).",
-            f"\"This quarter\" = Q{q} {today.year} "
-            f"(started {this_quarter_start.isoformat()}).",
-            f"\"Last quarter\" = Q{((q - 2) % 4) + 1} "
-            f"{this_quarter_start.year - (1 if q == 1 else 0)} "
-            f"({last_quarter_start.isoformat()} to {last_quarter_end.isoformat()}).",
-            f"\"This year\" / YTD = {this_year_start.isoformat()} to {today.isoformat()}.",
-        ]
+        if "last month" in q_lower or "previous month" in q_lower:
+            return first_of_prev_month.strftime("%B %Y")
 
-        if since_date is not None:
-            parts.append(
-                f"Retrieved documents cover: {since_date.isoformat()} onward."
+        if "this month" in q_lower:
+            return today.strftime("%B %Y")
+
+        if (
+            "this year" in q_lower
+            or "ytd" in q_lower
+            or "year to date" in q_lower
+            or "year-to-date" in q_lower
+            or "so far this year" in q_lower
+        ):
+            return f"Year-to-date {today.year}"
+
+        if (
+            "6 month" in q_lower
+            or "six month" in q_lower
+            or "last 6" in q_lower
+            or "past 6" in q_lower
+        ):
+            six_ago = first_of_this_month
+            for _ in range(6):
+                six_ago = (six_ago - timedelta(days=1)).replace(day=1)
+            return (
+                f"{six_ago.strftime('%B %Y')} to "
+                f"{last_day_prev_month.strftime('%B %Y')}"
             )
 
-        return " ".join(parts)
+        if since_date is not None:
+            return f"from {since_date.isoformat()} onward"
+
+        return "Recent"
 
     # ------------------------------------------------------------------
     # Live-data detection (stopgap — moves to QueryAnalyzer later)

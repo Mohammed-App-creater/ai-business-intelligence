@@ -39,6 +39,7 @@ KEYWORD_GROUP_TO_DOMAINS: dict[str, list[str] | None] = {
     "services":         ["services"],
     "marketing":        ["marketing", "campaigns"],
     "promos":           ["promos"],
+    "expenses":         ["expenses"],
     "analytics":        None,   # broad question → search all domains
     "time_comparisons": None,   # modifier, not a domain by itself
 }
@@ -287,6 +288,16 @@ class Retriever:
                 _top_k = 12
             elif domains[0] == "services":
                 _top_k = 10
+            elif domains[0] == "expenses":
+                # Expenses has 9 doc types and 121 chunks per tenant —
+                # multi-month / multi-location / multi-payment questions
+                # need representative chunks from each doc_type. Top-k=5
+                # starves multi-dimension questions and the LLM refuses
+                # or hallucinates. Top-k=15 gives enough breadth for
+                # Q3 (6-month avg), Q5 (6-month trend), Q15 (payment
+                # ranking), Q16/Q18/Q19 (Main St vs Westside), while
+                # keeping prompt size reasonable.
+                _top_k = 15
             else:
                 _top_k = 5
             return await self._vector_store.search(
