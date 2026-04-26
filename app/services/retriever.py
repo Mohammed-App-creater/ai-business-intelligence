@@ -40,6 +40,7 @@ KEYWORD_GROUP_TO_DOMAINS: dict[str, list[str] | None] = {
     "marketing":        ["marketing", "campaigns"],
     "promos":           ["promos"],
     "expenses":         ["expenses"],
+    "giftcards":        ["giftcards"],
     "analytics":        None,   # broad question → search all domains
     "time_comparisons": None,   # modifier, not a domain by itself
 }
@@ -47,7 +48,7 @@ KEYWORD_GROUP_TO_DOMAINS: dict[str, list[str] | None] = {
 ALL_DOMAINS: list[str] = [
     "revenue", "staff", "services", "clients", "appointments",
     "marketing", "promos",
-    "expenses", "reviews", "payments", "campaigns",
+    "expenses", "giftcards", "reviews", "payments", "campaigns",
     "attendance", "subscriptions",
 ]
 
@@ -68,6 +69,31 @@ _LOCATION_COMPARE_PHRASES: list[str] = [
     "vs main",
     "main st and",
     "and westside",
+]
+
+# Multi-month aggregate phrases — when one of these is present in an
+# expenses question, we guarantee all monthly_summary chunks are in
+# the retrieved set so the LLM has complete data for aggregate math.
+_MULTI_MONTH_AGGREGATE_PHRASES: list[str] = [
+    "6 months",
+    "six months",
+    "last 6",
+    "past 6",
+    "6-month",
+    "over the last",
+    "average monthly",
+    "monthly average",
+    "year-to-date",
+    "year to date",
+    "ytd",
+    "this year so far",
+    "trending up or down",
+    "trend over",
+    "trend across",
+    "each month",
+    "per month",
+    "month-by-month",
+    "month by month",
 ]
 
 
@@ -294,13 +320,12 @@ class Retriever:
                 # need representative chunks from each doc_type. Top-k=5
                 # starves multi-dimension questions and the LLM refuses
                 # or hallucinates. Top-k=15 gives enough breadth for
-                # Q3 (6-month avg), Q5 (6-month trend), Q15 (payment
-                # ranking), Q16/Q18/Q19 (Main St vs Westside), while
-                # keeping prompt size reasonable.
+                # most multi-dimension questions.
                 _top_k = 15
             else:
                 _top_k = 5
-            return await self._vector_store.search(
+
+            results = await self._vector_store.search(
                 tenant_id=tenant_id,
                 query_embedding=query_embedding,
                 top_k=_top_k,
@@ -308,6 +333,47 @@ class Retriever:
                 since_date=since_date,
                 exclude_rollup=_needs_per_location,
             )
+
+            # Multi-month guarantee for expenses: when a question asks about
+            # 6-month averages, YTD, or cross-month trends, ensure ALL
+            # monthly_summary chunks are in the result so the LLM has
+            # complete data for aggregate math. Otherwise cosine ranking
+            # can miss 1-2 months and the answer is off by one month's worth.
+            if (
+                domains[0] == "expenses"
+                and any(p in q_lower for p in _MULTI_MONTH_AGGREGATE_PHRASES)
+            ):
+                try:
+                    existing_ids = {r.get("doc_id", "") for r in results}
+                    # Fetch ALL monthly_summary chunks for this tenant
+                    monthly_results = await self._vector_store.search(
+                        tenant_id=tenant_id,
+                        query_embedding=query_embedding,
+                        top_k=12,   # up to 12 months — accommodates up to 1yr fixtures
+                        doc_domain="expenses",
+                        doc_type="exp_monthly_summary",
+                        since_date=since_date,
+                    )
+                    # Append any monthly summary chunks NOT already in results
+                    for r in monthly_results:
+                        if r.get("doc_id", "") not in existing_ids:
+                            results.append(r)
+                            existing_ids.add(r.get("doc_id", ""))
+                    logger.info(
+                        "retriever.expenses_multi_month_guarantee "
+                        "added_monthly_chunks=%d total=%d",
+                        len(monthly_results), len(results),
+                    )
+                except Exception as e:
+                    # If the guarantee fetch fails for any reason, fall back
+                    # to the original cosine-only result. Never crash retrieval.
+                    logger.warning(
+                        "retriever.expenses_multi_month_guarantee failed: %r — "
+                        "falling back to cosine results",
+                        e,
+                    )
+
+            return results
 
         # 2-3 domains — balanced multi-domain search
         return await self._vector_store.search_multi_domain(

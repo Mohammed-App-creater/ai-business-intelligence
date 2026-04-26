@@ -53,7 +53,8 @@ EXPENSES_DOC_TYPES = {
     "exp_staff_attribution",
     "exp_cat_location_cross",
     "exp_dormant_category",
-    "exp_data_quality_notes",   # Grain-limitation notice (honesty chunk)
+    "exp_data_quality_notes",          # Grain-limitation notice
+    "exp_cost_reduction_candidates",   # Top controllable cost categories (for Q23)
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -361,6 +362,93 @@ def _chunk_data_quality_notes(business_id: int) -> str:
     )
 
 
+def _chunk_cost_reduction_candidates(
+    business_id: int,
+    category_rows: list,
+    latest_period: str,
+) -> str:
+    """
+    Build the per-tenant cost-reduction candidates chunk.
+
+    Ranks categories by most-recent-period spend and identifies
+    controllable ones (excluding fixed-cost categories like Rent,
+    Insurance, Payroll from "easily reducible" list — flag them
+    separately as fixed).
+
+    FIXED_COSTS are hard to reduce without structural business changes.
+    CONTROLLABLE costs are where most businesses have real levers.
+    """
+    FIXED_COST_CATEGORIES = {
+        "Rent & Utilities", "Rent", "Utilities",
+        "Insurance", "Payroll", "Software & Subscriptions",
+    }
+
+    latest_cats = [
+        r for r in category_rows
+        if str(r.get("period") or "")[:10] == latest_period
+    ]
+    latest_cats.sort(key=lambda r: float(r.get("total_amount") or 0), reverse=True)
+
+    if not latest_cats:
+        return (
+            f"Cost reduction candidates for business_id={business_id}: "
+            "No recent category data available for analysis."
+        )
+
+    fixed_lines = []
+    controllable_lines = []
+    for r in latest_cats:
+        cat_name = r.get("category_name", "Unknown")
+        amount = float(r.get("total_amount") or 0)
+        pct = float(r.get("pct_of_total") or 0)
+        anomaly = r.get("anomaly_flag")
+        baseline_delta = r.get("pct_vs_baseline")
+
+        extra = ""
+        if anomaly == "spike":
+            extra = f" ⚠ SPIKE: up {baseline_delta:+.1f}% vs baseline"
+        elif anomaly == "elevated":
+            extra = f" — elevated ({baseline_delta:+.1f}% vs baseline)"
+
+        line = f"  • {cat_name}: ${amount:,.0f} ({pct:.1f}% of total){extra}"
+
+        if cat_name in FIXED_COST_CATEGORIES:
+            fixed_lines.append(line)
+        else:
+            controllable_lines.append(line)
+
+    sections = [
+        f"Cost reduction candidates for business_id={business_id} "
+        f"(based on {latest_period}).",
+        "",
+        "CONTROLLABLE COST CATEGORIES (where cost-reduction efforts typically work):",
+    ]
+    sections.extend(controllable_lines if controllable_lines else
+                    ["  (no controllable categories in recent period)"])
+
+    sections.append("")
+    sections.append("FIXED / STRUCTURAL COST CATEGORIES (harder to reduce without structural change):")
+    sections.extend(fixed_lines if fixed_lines else
+                    ["  (no fixed categories in recent period)"])
+
+    sections.append("")
+    sections.append(
+        "When a user asks WHERE CAN I CUT COSTS or HOW TO REDUCE EXPENSES or "
+        "SAVE MONEY or OPTIMIZE SPENDING, recommend reviewing the controllable "
+        "cost categories first — start with the largest one(s), then any "
+        "marked as SPIKE or elevated. Ground the advice in the specific "
+        "category names and amounts above."
+    )
+    sections.append(
+        "Related vocabulary: where can I cut costs, reduce expenses, "
+        "cut spending, save money, optimize spending, expense advice, "
+        "cost-cutting priorities, controllable costs, variable costs, "
+        "fixed costs, overhead reduction."
+    )
+
+    return "\n".join(sections)
+
+
 CHUNK_GENERATORS = {
     "exp_monthly_summary":      _chunk_monthly_summary,
     "exp_category_monthly":     _chunk_category_monthly,
@@ -599,6 +687,29 @@ async def generate_expenses_docs(
         period_start=None,   # not period-scoped
         metadata={"scope": "tenant_wide"},
     ))
+
+    # 8c. Cost-reduction candidates — one per tenant
+    # Tells the LLM which categories are the biggest controllable costs
+    # (for "where can I cut costs" style questions). Ranks by most-recent
+    # period and separates fixed vs controllable.
+    if category_rows:
+        latest_period = max(str(r.get("period") or "")[:10]
+                            for r in category_rows if r.get("period"))
+        all_chunks.append(_make_chunk(
+            org_id=org_id,
+            doc_type="exp_cost_reduction_candidates",
+            row={"business_id": org_id, "latest_period": latest_period},
+            text=_chunk_cost_reduction_candidates(
+                business_id=org_id,
+                category_rows=category_rows,
+                latest_period=latest_period,
+            ),
+            period_start=None,   # tenant-wide, not period-scoped
+            metadata={
+                "scope": "tenant_wide",
+                "latest_period": latest_period,
+            },
+        ))
 
     # 9. Embed + store
     if not all_chunks:

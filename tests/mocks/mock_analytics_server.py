@@ -9,7 +9,8 @@ A lightweight FastAPI server that returns fixture data for all endpoints:
   - 3 clients endpoints
   - 3 marketing endpoints
   - 6 expenses endpoints
-  - 4 promos endpoints      ← NEW (Domain 8)
+  - 4 promos endpoints (+ 2 shape-switched aliases)
+  - 8 giftcards endpoints      ← NEW (Domain 9)
 
 Run this locally while the real Analytics Backend is under development —
 the ETL, embeddings, and chat pipeline can all be tested end-to-end without
@@ -52,7 +53,8 @@ from tests.mocks.services_fixtures import FIXTURES as SERVICES_FIXTURES
 from tests.mocks.clients_fixtures import FIXTURES as CLIENTS_FIXTURES
 from tests.mocks.marketing_fixtures import FIXTURES as MARKETING_FIXTURES
 from tests.mocks.expenses_fixtures import FIXTURES as EXPENSES_FIXTURES
-from tests.mocks.promos_fixtures import FIXTURES as PROMOS_FIXTURES   # NEW
+from tests.mocks.promos_fixtures import FIXTURES as PROMOS_FIXTURES
+from tests.mocks.giftcards_fixtures import FIXTURES as GIFTCARDS_FIXTURES   # NEW
 
 
 # ── Merge 2026 data into appointments fixtures ────────────────────────────────
@@ -81,7 +83,7 @@ _staff_fixtures = {
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.8.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.9.0")
 
 # Merge all fixtures into one lookup
 ALL_FIXTURES: dict[str, dict] = {
@@ -92,7 +94,8 @@ ALL_FIXTURES: dict[str, dict] = {
     **CLIENTS_FIXTURES,
     **MARKETING_FIXTURES,
     **EXPENSES_FIXTURES,
-    **PROMOS_FIXTURES,   # NEW — includes /codes-window + /locations-by-code alias paths
+    **PROMOS_FIXTURES,
+    **GIFTCARDS_FIXTURES,   # NEW — 8 simple POST routes, no shape switching
 }
 
 
@@ -271,7 +274,7 @@ STAFF_STANDARD_PATHS = [
     "/api/v1/leo/staff-attendance",
 ]
 
-# ── Services endpoints (5) ── NEW ─────────────────────────────────────────────
+# ── Services endpoints (5) ────────────────────────────────────────────────────
 SERVICES_PATHS = [
     "/api/v1/leo/services/monthly-summary",
     "/api/v1/leo/services/booking-stats",
@@ -280,21 +283,21 @@ SERVICES_PATHS = [
     "/api/v1/leo/services/catalog",
 ]
 
-# ── Clients endpoints (3) ── NEW ──────────────────────────────────────────────
+# ── Clients endpoints (3) ─────────────────────────────────────────────────────
 CLIENTS_PATHS = [
     "/api/v1/leo/clients/retention-snapshot",
     "/api/v1/leo/clients/cohort-monthly",
     "/api/v1/leo/clients/per-location-monthly",
 ]
 
-# ── Marketing endpoints (3) ── NEW ─────────────────────────────────────────────
+# ── Marketing endpoints (3) ───────────────────────────────────────────────────
 MARKETING_PATHS = [
     "/api/v1/leo/marketing/campaign-summary",
     "/api/v1/leo/marketing/channel-monthly",
     "/api/v1/leo/marketing/promo-attribution-monthly",
 ]
 
-# ── Expenses endpoints (6) ── NEW ─────────────────────────────────────────────
+# ── Expenses endpoints (6) ────────────────────────────────────────────────────
 EXPENSES_PATHS = [
     "/api/v1/leo/expenses/monthly-summary",
     "/api/v1/leo/expenses/category-breakdown",
@@ -304,7 +307,7 @@ EXPENSES_PATHS = [
     "/api/v1/leo/expenses/category-location-cross",
 ]
 
-# ── Promos endpoints (4 standard + 2 shape-switched) ── NEW ───────────────────
+# ── Promos endpoints (4 standard + 2 shape-switched) ──────────────────────────
 # /codes and /locations also get custom handlers (below) that switch shape
 # based on a request-body parameter (granularity / shape). The -window and
 # -by-code paths are also registered directly because the real client POSTs
@@ -316,6 +319,23 @@ PROMOS_STANDARD_PATHS = [
     "/api/v1/leo/promos/locations-by-code",
 ]
 
+# ── Gift Cards endpoints (8) ── NEW (Domain 9) ────────────────────────────────
+# All 8 use the standard _make_handler pattern (no shape switching).
+# EP6 (anomalies-snapshot) is always-emit — fixture returns single object even
+# when all counts are zero. The doc generator must emit a chunk regardless,
+# so the AI can answer "are there any refunds?" with "no, zero" instead of
+# "I don't have data" (Q31 acceptance criterion).
+GIFTCARDS_PATHS = [
+    "/api/v1/leo/giftcards/monthly",
+    "/api/v1/leo/giftcards/liability-snapshot",
+    "/api/v1/leo/giftcards/by-staff",
+    "/api/v1/leo/giftcards/by-location",
+    "/api/v1/leo/giftcards/aging-snapshot",
+    "/api/v1/leo/giftcards/anomalies-snapshot",
+    "/api/v1/leo/giftcards/denomination-snapshot",
+    "/api/v1/leo/giftcards/health-snapshot",
+]
+
 ALL_PATHS = (
     REVENUE_PATHS
     + APPOINTMENTS_PATHS
@@ -324,7 +344,8 @@ ALL_PATHS = (
     + CLIENTS_PATHS
     + MARKETING_PATHS
     + EXPENSES_PATHS
-    + PROMOS_STANDARD_PATHS   # NEW
+    + PROMOS_STANDARD_PATHS
+    + GIFTCARDS_PATHS   # NEW
 )
 
 for _path in ALL_PATHS:
@@ -357,7 +378,7 @@ async def health():
     return {
         "status": "ok",
         "mode": "mock",
-        "version": "1.8.0",
+        "version": "1.9.0",
         "endpoints": {
             "revenue":      len(REVENUE_PATHS),
             "appointments": len(APPOINTMENTS_PATHS),
@@ -367,6 +388,7 @@ async def health():
             "marketing":    len(MARKETING_PATHS),
             "expenses":     len(EXPENSES_PATHS),
             "promos":       len(PROMOS_STANDARD_PATHS) + 2,   # +2 for shape-switched /codes and /locations
+            "giftcards":    len(GIFTCARDS_PATHS),              # NEW — 8 simple POST routes
             "total":        len(ALL_PATHS) + 3,   # +1 staff-perf, +2 shape-switched promos
         },
     }
@@ -427,7 +449,7 @@ def start_mock_server() -> MockAnalyticsServer:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting LEO Mock Analytics Server v1.8.0 on http://localhost:8001")
+    print("Starting LEO Mock Analytics Server v1.9.0 on http://localhost:8001")
     print()
     print("Revenue endpoints (6):")
     for p in REVENUE_PATHS:
@@ -457,11 +479,15 @@ if __name__ == "__main__":
     for p in EXPENSES_PATHS:
         print(f"  POST {p}")
     print()
-    print("Promos endpoints (6):")   # NEW
+    print("Promos endpoints (6):")
     for p in PROMOS_STANDARD_PATHS:
         print(f"  POST {p}")
     print("  POST /api/v1/leo/promos/codes      {granularity: 'monthly'|'window'}")
     print("  POST /api/v1/leo/promos/locations  {shape: 'rollup'|'by_code'}")
+    print()
+    print("Giftcards endpoints (8):")   # NEW
+    for p in GIFTCARDS_PATHS:
+        print(f"  POST {p}")
     print()
     print(f"Total: {len(ALL_PATHS) + 3} endpoints")
     print("Health: GET http://localhost:8001/health")

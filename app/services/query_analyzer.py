@@ -61,7 +61,9 @@ REVENUE_KEYWORD_GROUP: dict[str, list[str]] = {
     "financial": [
         # Existing terms — kept as-is
         "revenue", "profit", "income", "earnings", "sales", "turnover",
-        "margin", "cost", "expense", "invoice", "payment", "refund",
+        # Step 7 Fix 2e — removed "expense" (belongs in expenses group)
+        # and "payment" (kept in expenses via "payment method"/"paid in cash")
+        "margin", "cost", "invoice", "refund",
         "price", "pricing", "discount", "cashflow", "cash flow",
 
         # Revenue-specific — covers all 20 Step 1 questions
@@ -79,8 +81,11 @@ REVENUE_KEYWORD_GROUP: dict[str, list[str]] = {
         "change in revenue", "compare", "comparison",
 
         # Payment types (Q10)
-        "cash", "card", "credit card", "payment type", "payment method",
-        "payment breakdown",
+        # Step 7 Fix 2e — removed "payment type", "payment method",
+        # "payment breakdown" (they belong to expenses group and were
+        # causing multi-domain pollution on Q15). "cash"/"card"/"credit card"
+        # kept because Revenue Q10 asks about payment mix in revenue context.
+        "cash", "card", "credit card",
 
         # Gift cards (Q11, LQ10)
         "gift card", "gift cards", "gift card redemption", "redeemed",
@@ -118,6 +123,91 @@ REVENUE_KEYWORD_GROUP: dict[str, list[str]] = {
         "should i be worried", "is my business",
     ]
 }
+
+GIFTCARDS_KEYWORDS: list[str] = [
+    # ── Core gift card vocabulary (overlaps with Revenue's "financial") ──
+    "gift card", "gift cards", "giftcard", "giftcards", "gc",
+
+    # ── Vocab variants (Q18-Q21 — Lesson 6) ──
+    "prepaid", "prepaid card", "prepaid cards",
+    "stored value", "stored value card", "stored-value",
+    "gift voucher", "gift vouchers", "voucher card",
+    "gift certificate", "gift certificates",
+
+    # ── Outstanding / liability (Q2, Q3, Q6, Q19, Q22) ──
+    "outstanding", "outstanding liability", "outstanding gift card",
+    "outstanding balance", "liability", "gift card liability",
+    "unused balance", "remaining balance", "unredeemed", "unredeemed balance",
+    "owe", "owed", "money on cards", "money on gift cards",
+
+    # ── Issuance / activation / sales (Q1, Q5) ──
+    "issued", "gift cards issued", "activated", "gift card activated",
+    "sold gift cards", "gift card sales", "new gift cards",
+    "gift cards sold",
+
+    # ── Redemption (Q4, Q5, Q7) — shared with Revenue ──
+    "redemption", "redemptions", "redeemed", "gift card redemption",
+    "gift card redemptions", "drained", "fully used", "fully redeemed",
+    "gift card revenue", "gift card spend",
+
+    # ── Trends & comparisons (Q4-Q7) ──
+    "gift card trend", "redemption trend", "vs last year",
+    "year over year gift card", "month over month gift card",
+
+    # ── Per-staff (Q8) ──
+    "top staff gift card", "which staff redeems", "who redeems gift cards",
+    "staff gift card", "staff redemptions",
+
+    # ── Per-location (Q9, Q10, S3) — Lesson 5: include "branch" + "location" ──
+    "by location gift card", "by branch gift card", "branch gift card",
+    "location gift card", "where redeemed", "which branch redeems",
+    "which location redeems", "top location gift card",
+    "top branch gift card",
+
+    # ── Denomination (Q12) ──
+    "denomination", "denominations", "face value", "face values",
+    "card amount", "card value", "card denomination",
+    "$25 gift card", "$50 gift card", "$100 gift card",
+    "common denomination", "popular denomination",
+
+    # ── Why / root cause (Q13-Q15) ──
+    "why gift card", "gift card down", "gift card up",
+    "gift card spike", "gift card dropped",
+
+    # ── Aging / dormant (Q14, Q15, Q26, Q28) ──
+    "dormant", "dormant gift cards", "expired gift card",
+    "expire", "expiration", "old gift card", "old gift cards",
+    "untouched gift cards", "sitting gift cards", "sitting unused",
+    "never used", "never redeemed", "never-redeemed",
+    "aging gift cards", "gift card age", "how long gift card",
+    "days to first redemption", "first redemption",
+
+    # ── Advice (Q16, Q17) ──
+    "should i give gift cards", "should i sell gift cards",
+    "what to do with dormant gift cards",
+    "promote gift cards", "gift card strategy",
+
+    # ── Anomalies (Q24, Q25, Q31) ──
+    "deactivated gift card", "deactivated gift cards",
+    "drained but active", "drained-but-active", "anomaly gift card",
+    "gift card anomaly", "refunded gift card",
+    "refunded gift cards", "gift card refund",
+
+    # ── Health / pattern (Q23, Q30) ──
+    "redemption rate", "gift card redemption rate",
+    "single visit", "single-visit", "single visit drained",
+    "multi visit", "multi-visit", "drained in one visit",
+    "drained in single visit", "how cards are used",
+    "gift card usage pattern",
+
+    # ── Uplift / customer spend (Q27) ──
+    "uplift", "gift card uplift", "spend on top of gift card",
+    "out of pocket gift card", "extra spending gift card",
+
+    # ── Time modifiers shared with revenue ──
+    "this month gift card", "last month gift card",
+    "this quarter gift card",
+]
 
 PROMOS_KEYWORDS: list[str] = [
     # ── Core domain vocabulary ────────────────────────────────────────────
@@ -268,7 +358,12 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "service frequency", "seasonal service", "service trend",
 
         # Location breakdown (Q25, Q27–Q29)
-        "which branch", "which location", "location appointments",
+        # Step 7 Fix 2e — removed bare "which branch" (matched expense
+        # questions like Q16 "which branch costs more to run"). Kept
+        # "branch appointments"/"location appointments" for appointment-
+        # specific branch questions, and bare "which location" is still
+        # useful since it doesn't overlap with expense vocabulary.
+        "which location", "location appointments",
         "branch appointments", "location bookings", "branch bookings",
         "busiest branch", "busiest location", "location cancellation",
         "location cancel rate", "location comparison",
@@ -488,6 +583,7 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "which location spends",
         "which branch spends",
     ],
+    "giftcards": GIFTCARDS_KEYWORDS,
     "staff": [
         # Core staff vocabulary
         "staff", "employee", "employees", "team", "stylist", "therapist",
@@ -870,6 +966,18 @@ class QueryAnalyzer:
             "per promo code", "per coupon code", "by promo code",
             "by coupon", "by promo", "per promo", "per coupon",
             "distinct promo codes", "distinct coupons", "distinct promos",
+
+            # ── Gift cards domain ─────────────────────────────────────────────
+            "outstanding gift card balance", "outstanding gift card liability",
+            "gift card liability",
+            "gift cards i sold", "gift cards still active",
+            "gift card redemption rate",
+            "gift card distribution", "gift card denomination distribution",
+            "dormant gift cards", "never-redeemed gift cards",
+            "gift card uplift",
+            "drained but active gift cards",
+            "deactivated gift cards count",
+            "refunded gift card redemptions",
         ]
         if any(phrase in q_lower for phrase in _DATA_METRIC_OVERRIDES):
             matched = [p for p in _DATA_METRIC_OVERRIDES if p in q_lower]

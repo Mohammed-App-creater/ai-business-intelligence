@@ -4,7 +4,7 @@ Run a .sql file against the warehouse or vector database using the
 existing PGPool infrastructure. No psql client needed.
 
 Usage:
-    PYTHONPATH=. python scripts/run_schema.py infra/warehouse_schema_staff_append.sql warehouse
+    PYTHONPATH=. python scripts/run_schema.py infra/warehouse_schema.sql warehouse
     PYTHONPATH=. python scripts/run_schema.py infra/init_db.sql vector
 """
 import asyncio

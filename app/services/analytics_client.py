@@ -91,7 +91,7 @@ class AnalyticsClient:
     Sprint 5  — clients      ✅
     Sprint 6  — marketing    ✅
     Sprint 7  — memberships  ⬜
-    Sprint 8  — giftcards    ⬜
+    Sprint 8  — giftcards    ✅
     Sprint 9  — promos       ✅
     Sprint 10 — expenses     ✅
     Sprint 11 — forms        ⬜
@@ -1145,6 +1145,194 @@ class AnalyticsClient:
             "business_id": business_id,
         }
         return await self._post("/api/v1/leo/promos/catalog-health", payload)
+
+    # ── GIFT CARDS DOMAIN ─────────────────────────────────────────────────────
+    # 8 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 8 — giftcards
+
+    async def get_giftcard_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP1 — Per-month gift card redemption + activation summary.
+
+        Powers: Q1, Q4, Q5, Q7, Q18, Q21, Q27, Q29, S1, S2
+        Key fields per row:
+            period_start, redemption_count, redemption_amount_total,
+            distinct_cards_redeemed, activation_count,
+            weekend_redemption_count, weekday_redemption_count,
+            avg_uplift_per_visit, uplift_total,
+            mom_redemption_pct, mom_activation_pct, yoy_redemption_pct
+        Months with zero redemption AND zero activation are NOT emitted.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/monthly", payload)
+
+    async def get_giftcard_liability_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+    ) -> dict:
+        """
+        EP2 — Outstanding liability snapshot at a given date.
+
+        Powers: Q2, Q3, Q6, Q19, Q22
+        Returns a SINGLE OBJECT (not a list):
+            snapshot_date, active_card_count, outstanding_liability_total,
+            avg_remaining_balance_excl_drained,
+            avg_remaining_balance_incl_drained,
+            drained_active_count, median_remaining_balance
+        """
+        payload = {
+            "business_id":   business_id,
+            "snapshot_date": snapshot_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/liability-snapshot", payload)
+
+    async def get_giftcard_by_staff(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP3 — Per-staff per-month redemption breakdown with rank.
+
+        Powers: Q8
+        Key fields per row:
+            staff_id, staff_name, is_active, period_start,
+            redemption_count, redemption_amount_total,
+            distinct_cards_redeemed, rank_in_period
+        Inactive staff (is_active=0) are kept — Tom Rivera-class fix per L2.
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/by-staff", payload)
+
+    async def get_giftcard_by_location(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        EP4 — Per-location per-month redemption with within-org share + MoM.
+
+        Powers: Q9, Q10, S3
+        Key fields per row:
+            location_id, location_name, period_start,
+            redemption_count, redemption_amount_total,
+            distinct_cards_redeemed, pct_of_org_redemption,
+            mom_redemption_pct
+        NOTE: Per-location ACTIVATION not available — tbl_giftcard has no
+        LocationID column. Activation is org-rollup only (Risk R6).
+        """
+        payload = {
+            "business_id": business_id,
+            "start_date":  start_date.isoformat(),
+            "end_date":    end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/by-location", payload)
+
+    async def get_giftcard_aging_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+    ) -> list[dict]:
+        """
+        EP5 — Aging buckets + dormancy summary.
+
+        Powers: Q14, Q15, Q26, Q28
+        Returns 5 rows: 4 aging_bucket rows + 1 dormancy_summary row.
+        Each row has:
+            row_type ('aging_bucket' | 'dormancy_summary'),
+            age_bucket ('0-30' | '31-90' | '91-180' | '181+' | 'all'),
+            card_count, liability_amount, pct_of_total_liability,
+            never_redeemed_in_bucket, avg_days_to_first_redemption,
+            longest_dormant_card_id, longest_dormant_days
+        """
+        payload = {
+            "business_id":   business_id,
+            "snapshot_date": snapshot_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/aging-snapshot", payload)
+
+    async def get_giftcard_anomalies_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+        start_date: date,
+        end_date: date,
+    ) -> dict:
+        """
+        EP6 — Anomalies snapshot (ALWAYS-EMIT — Q31 acceptance contract).
+
+        Powers: Q24, Q25, Q31
+        Returns a SINGLE OBJECT even when all counts are zero. Fields:
+            snapshot_date, drained_active_count, drained_active_card_ids,
+            deactivated_count, deactivated_value_total_derived,
+            refunded_redemption_count, refunded_redemption_amount
+        Refunded counts are computed within [start_date, end_date].
+        """
+        payload = {
+            "business_id":   business_id,
+            "snapshot_date": snapshot_date.isoformat(),
+            "start_date":    start_date.isoformat(),
+            "end_date":      end_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/anomalies-snapshot", payload)
+
+    async def get_giftcard_denomination_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+    ) -> list[dict]:
+        """
+        EP7 — Distribution of cards by derived face value bucket.
+
+        Powers: Q12
+        Returns 6 bucket rows (always all 6, even if card_count = 0):
+            "$25 or less" | "$26-$50" | "$51-$100"
+            "$101-$200"   | "$201-$500" | "$500+"
+        Each row has: denomination_bucket, card_count, total_value_issued,
+                      avg_face_value, pct_of_cards
+        """
+        payload = {
+            "business_id":   business_id,
+            "snapshot_date": snapshot_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/denomination-snapshot", payload)
+
+    async def get_giftcard_health_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+    ) -> dict:
+        """
+        EP8 — Card population health (lifetime redemption rate + visit pattern).
+
+        Powers: Q23, Q30
+        Returns a SINGLE OBJECT:
+            snapshot_date, total_cards_issued, cards_with_redemption,
+            redemption_rate_pct, single_visit_drained_count,
+            multi_visit_redeemed_count, single_visit_drained_pct_of_redeemed,
+            multi_visit_redeemed_pct_of_redeemed, distinct_customer_redeemers
+        """
+        payload = {
+            "business_id":   business_id,
+            "snapshot_date": snapshot_date.isoformat(),
+        }
+        return await self._post("/api/v1/leo/giftcards/health-snapshot", payload)
 
     # ── EXPENSES DOMAIN ───────────────────────────────────────────────────────
     # 6 endpoints, same POST + JSON body pattern as all other domains.

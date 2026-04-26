@@ -35,6 +35,8 @@ from app.services.doc_generators.domains.promos import generate_promo_docs
 from etl.transforms.promos_etl import PromosExtractor
 from app.services.doc_generators.domains.expenses import generate_expenses_docs
 from etl.transforms.expenses_etl import ExpensesExtractor
+from app.services.doc_generators.domains.giftcards import generate_giftcards_docs
+from etl.transforms.giftcards_etl import GiftcardsExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
@@ -44,6 +46,7 @@ _DOMAIN_HANDLERS: dict[str, str] = {
     "marketing":     "_gen_marketing",
     "promos":        "_gen_promos",
     "expenses":      "_gen_expenses",
+    "giftcards":     "_gen_giftcards",
     "reviews":       "_gen_reviews",
     "payments":      "_gen_payments",
     "campaigns":     "_gen_campaigns",
@@ -1332,6 +1335,97 @@ class DocGenerator:
             result.get("created", 0),
             result.get("skipped", 0),
             result.get("failed", 0),
+        )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Gift Cards (Domain 9)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _fetch_giftcards_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        """
+        Run GiftcardsExtractor for the requested window.
+        Returns dict produced by GiftcardsExtractor.run():
+            {
+                "monthly":       [...],
+                "liability":     {...},
+                "by_staff":      [...],
+                "by_location":   [...],
+                "aging":         [...],
+                "anomalies":     {...},
+                "denomination":  [...],
+                "health":        {...},
+                "snapshot_date": date,
+                "counts":        {...},
+            }
+        """
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "monthly":       [],
+                "liability":     None,
+                "by_staff":      [],
+                "by_location":   [],
+                "aging":         [],
+                "anomalies":     None,
+                "denomination":  [],
+                "health":        None,
+                "counts":        {},
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = GiftcardsExtractor(client=client, wh_pool=self._wh._pool)
+        return await extractor.run(
+            business_id=org_id,
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_date=end_date,
+        )
+
+    async def _gen_giftcards(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        """
+        Gift Cards domain doc generation.
+        Fetch warehouse rows → generate_giftcards_docs builds + embeds chunks.
+
+        Expected result for a 12-month / biz_id=42 mock-server run:
+          monthly=13 + liability=1 + by_staff=12 + by_location=10
+          + aging=4 + dormancy=1 + anomalies=1 + denomination=1 + health=1
+          = 44 docs
+        """
+        warehouse_rows = await self._fetch_giftcards_warehouse_rows(
+            org_id, period_start, months,
+        )
+        result = await generate_giftcards_docs(
+            org_id=org_id,
+            warehouse_rows=warehouse_rows,
+            embedding_client=self._emb,
+            vector_store=self._vs,
+            force=force,
+        )
+        counts = warehouse_rows.get("counts") or {}
+        self._logger.info(
+            "giftcards ETL complete for org=%d — monthly=%d liability=%d "
+            "staff=%d location=%d aging=%d anomalies=%d denomination=%d health=%d",
+            org_id,
+            counts.get("monthly", 0),     counts.get("liability", 0),
+            counts.get("by_staff", 0),    counts.get("by_location", 0),
+            counts.get("aging", 0),       counts.get("anomalies", 0),
+            counts.get("denomination", 0), counts.get("health", 0),
+        )
+        return (
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
         )
 
     async def _gen_reviews(

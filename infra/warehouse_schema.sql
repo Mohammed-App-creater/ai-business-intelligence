@@ -1723,3 +1723,245 @@ CREATE INDEX IF NOT EXISTS idx_wh_promo_catalog_health_biz
 --   DROP TABLE IF EXISTS wh_promo_locations;
 --   DROP TABLE IF EXISTS wh_promo_codes;
 --   DROP TABLE IF EXISTS wh_promo_monthly;
+
+
+
+
+-- =============================================================================
+-- LEO AI BI — Gift Cards Warehouse Tables  (Domain 9, Sprint 9)
+-- File: migrations/2026_04_25_giftcards_warehouse.sql
+-- =============================================================================
+--
+-- 8 tables, one per analytics endpoint (EP1–EP8 from API spec v1.0).
+-- All upserts use INSERT ... ON CONFLICT DO UPDATE inside a transaction
+-- (idempotent — Lesson 17 from prior sprints).
+--
+-- Snapshot tables use (business_id, snapshot_date) as UNIQUE — re-running the
+-- ETL on the same snapshot_date overwrites; running on a new snapshot_date
+-- appends a new historical row.
+--
+-- Per-period tables use (business_id, period_start) — same upsert behavior.
+-- Bucketed tables (aging, denomination) include the bucket label in UNIQUE.
+--
+-- All money: NUMERIC(20,6) — matches tbl_giftcard.GiftCardBalance precision.
+-- All percentages: NUMERIC(7,2) — allows up to 99999.99 for huge MoM/YoY spikes.
+-- =============================================================================
+
+
+-- ── EP1: wh_giftcard_monthly ─────────────────────────────────────────────────
+-- Per-month redemption + activation summary. One row per (business_id, period).
+-- Months with zero redemption AND zero activation are not emitted (per spec).
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_monthly (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    period_start                    DATE            NOT NULL,
+    redemption_count                INTEGER         NOT NULL DEFAULT 0,
+    redemption_amount_total         NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    distinct_cards_redeemed         INTEGER         NOT NULL DEFAULT 0,
+    activation_count                INTEGER         NOT NULL DEFAULT 0,
+    weekend_redemption_count        INTEGER         NOT NULL DEFAULT 0,
+    weekday_redemption_count        INTEGER         NOT NULL DEFAULT 0,
+    avg_uplift_per_visit            NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    uplift_total                    NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    mom_redemption_pct              NUMERIC(7,2),
+    mom_activation_pct              NUMERIC(7,2),
+    yoy_redemption_pct              NUMERIC(7,2),
+    generated_at                    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_monthly_biz_period
+    ON wh_giftcard_monthly (business_id, period_start);
+
+
+-- ── EP2: wh_giftcard_liability_snapshot ──────────────────────────────────────
+-- Outstanding liability snapshot. One row per (business_id, snapshot_date).
+-- For Q6 trend ("liability over trailing 6 months") the ETL writes one row
+-- per month-end snapshot_date; multiple historical rows accumulate over time.
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_liability_snapshot (
+    id                                      SERIAL          PRIMARY KEY,
+    business_id                             INTEGER         NOT NULL,
+    snapshot_date                           DATE            NOT NULL,
+    active_card_count                       INTEGER         NOT NULL DEFAULT 0,
+    outstanding_liability_total             NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    avg_remaining_balance_excl_drained      NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    avg_remaining_balance_incl_drained      NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    drained_active_count                    INTEGER         NOT NULL DEFAULT 0,
+    median_remaining_balance                NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    generated_at                            TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_liability_biz_date
+    ON wh_giftcard_liability_snapshot (business_id, snapshot_date DESC);
+
+
+-- ── EP3: wh_giftcard_by_staff ────────────────────────────────────────────────
+-- Per-staff per-month redemption breakdown. UNIQUE (biz, staff, period).
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_by_staff (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    staff_id                        INTEGER         NOT NULL,
+    staff_name                      VARCHAR(150)    NOT NULL,
+    is_active                       SMALLINT        NOT NULL DEFAULT 1,
+    period_start                    DATE            NOT NULL,
+    redemption_count                INTEGER         NOT NULL DEFAULT 0,
+    redemption_amount_total         NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    distinct_cards_redeemed         INTEGER         NOT NULL DEFAULT 0,
+    rank_in_period                  INTEGER         NOT NULL DEFAULT 0,
+    generated_at                    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, staff_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_by_staff_biz_period
+    ON wh_giftcard_by_staff (business_id, period_start);
+
+
+-- ── EP4: wh_giftcard_by_location ─────────────────────────────────────────────
+-- Per-location per-month redemption with within-org share + MoM.
+-- UNIQUE (biz, location, period).
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_by_location (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    location_id                     INTEGER         NOT NULL,
+    location_name                   VARCHAR(150)    NOT NULL,
+    period_start                    DATE            NOT NULL,
+    redemption_count                INTEGER         NOT NULL DEFAULT 0,
+    redemption_amount_total         NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    distinct_cards_redeemed         INTEGER         NOT NULL DEFAULT 0,
+    pct_of_org_redemption           NUMERIC(7,2),
+    mom_redemption_pct              NUMERIC(7,2),
+    generated_at                    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, location_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_by_location_biz_period
+    ON wh_giftcard_by_location (business_id, period_start);
+
+
+-- ── EP5: wh_giftcard_aging_snapshot ──────────────────────────────────────────
+-- 5 rows per (biz, snapshot_date): 4 aging_bucket rows + 1 dormancy_summary row.
+-- age_bucket label: "0-30" | "31-90" | "91-180" | "181+" | "all" (summary).
+-- row_type: "aging_bucket" | "dormancy_summary"
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_aging_snapshot (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    snapshot_date                   DATE            NOT NULL,
+    row_type                        VARCHAR(30)     NOT NULL,
+    age_bucket                      VARCHAR(20)     NOT NULL,
+    card_count                      INTEGER         NOT NULL DEFAULT 0,
+    liability_amount                NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    pct_of_total_liability          NUMERIC(7,2),
+    never_redeemed_in_bucket        INTEGER         NOT NULL DEFAULT 0,
+    avg_days_to_first_redemption    NUMERIC(8,1),
+    longest_dormant_card_id         INTEGER,
+    longest_dormant_days            INTEGER,
+    generated_at                    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, snapshot_date, age_bucket)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_aging_biz_date
+    ON wh_giftcard_aging_snapshot (business_id, snapshot_date DESC);
+
+
+-- ── EP6: wh_giftcard_anomalies_snapshot ──────────────────────────────────────
+-- ALWAYS-EMIT — one row per (biz, snapshot_date) even when all counts are zero
+-- (Q31 acceptance). drained_active_card_ids stored as INTEGER[].
+-- period_start/end define the window for refunded_redemption_* counts.
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_anomalies_snapshot (
+    id                                      SERIAL          PRIMARY KEY,
+    business_id                             INTEGER         NOT NULL,
+    snapshot_date                           DATE            NOT NULL,
+    drained_active_count                    INTEGER         NOT NULL DEFAULT 0,
+    drained_active_card_ids                 INTEGER[]       NOT NULL DEFAULT '{}',
+    deactivated_count                       INTEGER         NOT NULL DEFAULT 0,
+    deactivated_value_total_derived         NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    refunded_redemption_count               INTEGER         NOT NULL DEFAULT 0,
+    refunded_redemption_amount              NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    period_start                            DATE,
+    period_end                              DATE,
+    generated_at                            TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_anomalies_biz_date
+    ON wh_giftcard_anomalies_snapshot (business_id, snapshot_date DESC);
+
+
+-- ── EP7: wh_giftcard_denomination_snapshot ───────────────────────────────────
+-- 6 rows per (biz, snapshot_date) — one per denomination bucket.
+-- Buckets: "$25 or less" | "$26-$50" | "$51-$100" | "$101-$200"
+--        | "$201-$500"   | "$500+"
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_denomination_snapshot (
+    id                              SERIAL          PRIMARY KEY,
+    business_id                     INTEGER         NOT NULL,
+    snapshot_date                   DATE            NOT NULL,
+    denomination_bucket             VARCHAR(20)     NOT NULL,
+    card_count                      INTEGER         NOT NULL DEFAULT 0,
+    total_value_issued              NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    avg_face_value                  NUMERIC(20,6)   NOT NULL DEFAULT 0,
+    pct_of_cards                    NUMERIC(7,2)    NOT NULL DEFAULT 0,
+    generated_at                    TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                      TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, snapshot_date, denomination_bucket)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_denom_biz_date
+    ON wh_giftcard_denomination_snapshot (business_id, snapshot_date DESC);
+
+
+-- ── EP8: wh_giftcard_health_snapshot ─────────────────────────────────────────
+-- Card population health metrics. One row per (biz, snapshot_date).
+
+CREATE TABLE IF NOT EXISTS wh_giftcard_health_snapshot (
+    id                                          SERIAL          PRIMARY KEY,
+    business_id                                 INTEGER         NOT NULL,
+    snapshot_date                               DATE            NOT NULL,
+    total_cards_issued                          INTEGER         NOT NULL DEFAULT 0,
+    cards_with_redemption                       INTEGER         NOT NULL DEFAULT 0,
+    redemption_rate_pct                         NUMERIC(7,2),
+    single_visit_drained_count                  INTEGER         NOT NULL DEFAULT 0,
+    multi_visit_redeemed_count                  INTEGER         NOT NULL DEFAULT 0,
+    single_visit_drained_pct_of_redeemed        NUMERIC(7,2),
+    multi_visit_redeemed_pct_of_redeemed        NUMERIC(7,2),
+    distinct_customer_redeemers                 INTEGER         NOT NULL DEFAULT 0,
+    generated_at                                TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    created_at                                  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    updated_at                                  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    UNIQUE (business_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_giftcard_health_biz_date
+    ON wh_giftcard_health_snapshot (business_id, snapshot_date DESC);
+
+
+-- ── Sanity: rollback notes ───────────────────────────────────────────────────
+-- To rollback this migration:
+--   DROP TABLE IF EXISTS wh_giftcard_health_snapshot;
+--   DROP TABLE IF EXISTS wh_giftcard_denomination_snapshot;
+--   DROP TABLE IF EXISTS wh_giftcard_anomalies_snapshot;
+--   DROP TABLE IF EXISTS wh_giftcard_aging_snapshot;
+--   DROP TABLE IF EXISTS wh_giftcard_by_location;
+--   DROP TABLE IF EXISTS wh_giftcard_by_staff;
+--   DROP TABLE IF EXISTS wh_giftcard_liability_snapshot;
+--   DROP TABLE IF EXISTS wh_giftcard_monthly;
