@@ -1965,3 +1965,134 @@ CREATE INDEX IF NOT EXISTS idx_wh_giftcard_health_biz_date
 --   DROP TABLE IF EXISTS wh_giftcard_by_staff;
 --   DROP TABLE IF EXISTS wh_giftcard_liability_snapshot;
 --   DROP TABLE IF EXISTS wh_giftcard_monthly;
+
+
+
+
+
+-- migrations/2026_04_26_forms_warehouse.sql
+-- ============================================================================
+-- LEO AI BI · Sprint 10 · Forms Domain · Warehouse DDL v1.0
+-- ============================================================================
+-- 4 tables, all composite-PK on (business_id, snapshot_date) or
+-- (business_id, period_start). All idempotent via INSERT ... ON CONFLICT.
+--
+-- Apply against the WAREHOUSE database (port 5433 / LeoWearhouseDB).
+-- ============================================================================
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- FQ1 · Catalog snapshot — 1 row per (biz, snapshot_date)
+-- Powers: F1, F3, F8, F11
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_form_catalog_snapshot (
+    business_id                  INT          NOT NULL,
+    snapshot_date                DATE         NOT NULL,
+    total_template_count         INT          NOT NULL DEFAULT 0,
+    active_template_count        INT          NOT NULL DEFAULT 0,
+    inactive_template_count      INT          NOT NULL DEFAULT 0,
+    active_dormant_count         INT          NOT NULL DEFAULT 0,
+    inactive_dormant_count       INT          NOT NULL DEFAULT 0,
+    lifetime_submission_total    INT          NOT NULL DEFAULT 0,
+    recent_90d_submission_total  INT          NOT NULL DEFAULT 0,
+    most_recent_template_added   TIMESTAMP,
+    distinct_category_ids        INTEGER[]    NOT NULL DEFAULT '{}',
+    updated_at                   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (business_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_form_catalog_biz
+    ON wh_form_catalog_snapshot (business_id);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- FQ2 · Monthly summary — 1 row per (biz, period_start)
+-- Powers: F2, F4, F5, F6, F12, S1
+-- Months with zero activity are NOT emitted (R7).
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_form_monthly (
+    business_id                  INT          NOT NULL,
+    period_start                 DATE         NOT NULL,
+    submission_count             INT          NOT NULL DEFAULT 0,
+    ready_count                  INT          NOT NULL DEFAULT 0,
+    complete_count               INT          NOT NULL DEFAULT 0,
+    approved_count               INT          NOT NULL DEFAULT 0,
+    distinct_forms_used          INT          NOT NULL DEFAULT 0,
+    distinct_customers_filling   INT          NOT NULL DEFAULT 0,
+    mom_submission_pct           NUMERIC(8,2),
+    yoy_submission_pct           NUMERIC(8,2),
+    updated_at                   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (business_id, period_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_form_monthly_biz_period
+    ON wh_form_monthly (business_id, period_start DESC);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- FQ3 · Per-form snapshot — 1 row per (biz, form_id, snapshot_date)
+-- Powers: F7, F8, F11
+-- Includes inactive templates so F8/F11 surface them with is_active flag.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_form_per_form_snapshot (
+    business_id                  INT          NOT NULL,
+    snapshot_date                DATE         NOT NULL,
+    form_id                      INT          NOT NULL,
+    form_name                    VARCHAR(50)  NOT NULL,
+    form_description             VARCHAR(500),
+    is_active                    BOOLEAN      NOT NULL,
+    category_id                  INT          NOT NULL,
+    template_created_at          TIMESTAMP    NOT NULL,
+    lifetime_submission_count    INT          NOT NULL DEFAULT 0,
+    complete_count               INT          NOT NULL DEFAULT 0,
+    approved_count               INT          NOT NULL DEFAULT 0,
+    ready_count                  INT          NOT NULL DEFAULT 0,
+    submissions_last_30d         INT          NOT NULL DEFAULT 0,
+    submissions_last_90d         INT          NOT NULL DEFAULT 0,
+    most_recent_submission_at    TIMESTAMP,
+    distinct_customers           INT          NOT NULL DEFAULT 0,
+    is_dormant                   BOOLEAN      NOT NULL,
+    is_active_dormant            BOOLEAN      NOT NULL,
+    completion_rate_pct          NUMERIC(5,2),
+    rank_by_submissions          INT          NOT NULL,
+    updated_at                   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (business_id, snapshot_date, form_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_form_per_form_biz_snap
+    ON wh_form_per_form_snapshot (business_id, snapshot_date);
+
+CREATE INDEX IF NOT EXISTS idx_wh_form_per_form_dormant
+    ON wh_form_per_form_snapshot (business_id, is_active_dormant)
+    WHERE is_active_dormant = TRUE;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- FQ4 · Lifecycle snapshot — 1 row per (biz, snapshot_date)
+-- Powers: F9, F10, F13
+-- ⚠️ ALWAYS-EMIT contract — must always have one row per snapshot, even when
+-- counts are all zero. Mirrors gift cards G6 pattern.
+-- ─────────────────────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_form_lifecycle_snapshot (
+    business_id                  INT          NOT NULL,
+    snapshot_date                DATE         NOT NULL,
+    total_submissions            INT          NOT NULL DEFAULT 0,
+    ready_count                  INT          NOT NULL DEFAULT 0,
+    complete_count               INT          NOT NULL DEFAULT 0,
+    approved_count               INT          NOT NULL DEFAULT 0,
+    unknown_status_count         INT          NOT NULL DEFAULT 0,
+    completion_rate_pct          NUMERIC(5,2),
+    stuck_ready_count            INT          NOT NULL DEFAULT 0,
+    stuck_ready_total_age_days   INT          NOT NULL DEFAULT 0,
+    most_recent_submission_at    TIMESTAMP,
+    stuck_ready_submission_ids   INTEGER[]    NOT NULL DEFAULT '{}',
+    updated_at                   TIMESTAMP    NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (business_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_form_lifecycle_biz
+    ON wh_form_lifecycle_snapshot (business_id);
+
+
+-- ============================================================================
+-- End of DDL — 4 tables, 5 indexes
+-- ============================================================================

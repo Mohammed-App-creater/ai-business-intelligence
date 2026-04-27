@@ -94,7 +94,7 @@ class AnalyticsClient:
     Sprint 8  — giftcards    ✅
     Sprint 9  — promos       ✅
     Sprint 10 — expenses     ✅
-    Sprint 11 — forms        ⬜
+    Sprint 11 — forms        ✅
     """
     
     def __init__(
@@ -1542,6 +1542,87 @@ class AnalyticsClient:
         }
         return await self._post(
             "/api/v1/leo/expenses/category-location-cross", payload
+        )
+
+    # ── FORMS DOMAIN ──────────────────────────────────────────────────────────
+    # 4 endpoints, same POST + JSON body pattern as all other domains.
+    # Sprint 11 — forms
+
+    async def get_forms_catalog_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+    ) -> dict | None:
+        """
+        FQ1 — Catalog snapshot: template counts, dormancy splits.
+
+        Returns single dict or None if biz unknown.
+        """
+        return await self._post(
+            "/api/v1/leo/forms/catalog-snapshot",
+            {
+                "business_id":   business_id,
+                "snapshot_date": snapshot_date.isoformat(),
+            },
+        )
+
+    async def get_forms_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict]:
+        """
+        FQ2 — Monthly submission summary across the requested window.
+
+        Months with zero activity are NOT emitted (R7) — doc gen handles that.
+        Returns list of dicts in DESC period order.
+        """
+        return await self._post(
+            "/api/v1/leo/forms/monthly",
+            {
+                "business_id": business_id,
+                "start_date":  start_date.isoformat(),
+                "end_date":    end_date.isoformat(),
+            },
+        ) or []
+
+    async def get_forms_per_form_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+    ) -> list[dict]:
+        """
+        FQ3 — Per-form snapshot with rank and dormancy flags.
+
+        Returns one row per template (active + inactive). Ordered by
+        lifetime_submission_count DESC (rank 1 first).
+        """
+        return await self._post(
+            "/api/v1/leo/forms/per-form-snapshot",
+            {
+                "business_id":   business_id,
+                "snapshot_date": snapshot_date.isoformat(),
+            },
+        ) or []
+
+    async def get_forms_lifecycle_snapshot(
+        self,
+        business_id: int,
+        snapshot_date: date,
+    ) -> dict:
+        """
+        FQ4 — Lifecycle status snapshot (ALWAYS-EMIT).
+
+        Returns single dict — never None, even when biz has no submissions.
+        Doc gen relies on this contract for F10 / F13 / "stuck" answers.
+        """
+        return await self._post(
+            "/api/v1/leo/forms/lifecycle-snapshot",
+            {
+                "business_id":   business_id,
+                "snapshot_date": snapshot_date.isoformat(),
+            },
         )
 
     # -------------------------------------------------------------------------

@@ -63,6 +63,17 @@ LIVE_DATA_REDIRECT = (
 )
 
 
+# If any of these appear alongside "this month/week", treat the query as a
+# historical comparison and let it through.
+_HISTORICAL_ANCHOR_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\blast (?:month|week|quarter|year)\b", re.I),
+    re.compile(r"\bprevious (?:month|week|quarter|year)\b", re.I),
+    re.compile(r"\b(?:vs\.?|versus|compared? to|compare with)\b", re.I),
+    re.compile(r"\byear[- ]over[- ]year\b", re.I),
+    re.compile(r"\b(?:ytd|mtd|wtd|qtd)\b", re.I),
+    re.compile(r"\b(?:trend|trending|over time|history|historical)\b", re.I),
+]
+
 # ---------------------------------------------------------------------------
 # PII name-lookup detection — refuse before RAG retrieval
 # ---------------------------------------------------------------------------

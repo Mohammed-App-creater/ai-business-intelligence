@@ -37,6 +37,8 @@ from app.services.doc_generators.domains.expenses import generate_expenses_docs
 from etl.transforms.expenses_etl import ExpensesExtractor
 from app.services.doc_generators.domains.giftcards import generate_giftcards_docs
 from etl.transforms.giftcards_etl import GiftcardsExtractor
+from app.services.doc_generators.domains.forms import generate_forms_docs
+from etl.transforms.forms_etl import FormsExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
@@ -47,6 +49,7 @@ _DOMAIN_HANDLERS: dict[str, str] = {
     "promos":        "_gen_promos",
     "expenses":      "_gen_expenses",
     "giftcards":     "_gen_giftcards",
+    "forms":         "_gen_forms",
     "reviews":       "_gen_reviews",
     "payments":      "_gen_payments",
     "campaigns":     "_gen_campaigns",
@@ -1421,6 +1424,72 @@ class DocGenerator:
             counts.get("by_staff", 0),    counts.get("by_location", 0),
             counts.get("aging", 0),       counts.get("anomalies", 0),
             counts.get("denomination", 0), counts.get("health", 0),
+        )
+        return (
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
+        )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Forms (Domain 10)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _fetch_forms_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        """
+        Run FormsExtractor for the requested window.
+        Returns dict produced by FormsExtractor.run():
+            {
+                "catalog":   dict (1 row),
+                "monthly":   list[dict],
+                "per_form":  list[dict],
+                "lifecycle": dict (1 row, ALWAYS-EMIT),
+            }
+        Side effect: writes to all 4 wh_form_* warehouse tables.
+        """
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "catalog":   {},
+                "monthly":   [],
+                "per_form":  [],
+                "lifecycle": {},
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = FormsExtractor(analytics=client, wh=self._wh._pool)
+        return await extractor.run(
+            business_id=org_id,
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_date=end_date,
+        )
+
+    async def _gen_forms(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        """
+        Forms domain doc generation.
+        Fetch warehouse rows → generate_forms_docs builds + embeds chunks.
+        """
+        warehouse_rows = await self._fetch_forms_warehouse_rows(
+            org_id, period_start, months,
+        )
+        result = await generate_forms_docs(
+            org_id=org_id,
+            warehouse_rows=warehouse_rows,
+            embedding_client=self._emb,
+            vector_store=self._vs,
+            force=force,
         )
         return (
             result["docs_created"],

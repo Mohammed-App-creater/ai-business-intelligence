@@ -10,7 +10,8 @@ A lightweight FastAPI server that returns fixture data for all endpoints:
   - 3 marketing endpoints
   - 6 expenses endpoints
   - 4 promos endpoints (+ 2 shape-switched aliases)
-  - 8 giftcards endpoints      ← NEW (Domain 9)
+  - 8 giftcards endpoints      (Domain 9)
+  - 4 forms endpoints          ← NEW (Domain 10)
 
 Run this locally while the real Analytics Backend is under development —
 the ETL, embeddings, and chat pipeline can all be tested end-to-end without
@@ -32,10 +33,12 @@ Usage (in pytest — ephemeral):
 import copy
 import socket
 import threading
+from datetime import date, datetime
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from tests.mocks.revenue_fixtures import FIXTURES as REVENUE_FIXTURES
 from tests.mocks.appointments_fixtures import FIXTURES as APPOINTMENTS_FIXTURES
@@ -54,7 +57,13 @@ from tests.mocks.clients_fixtures import FIXTURES as CLIENTS_FIXTURES
 from tests.mocks.marketing_fixtures import FIXTURES as MARKETING_FIXTURES
 from tests.mocks.expenses_fixtures import FIXTURES as EXPENSES_FIXTURES
 from tests.mocks.promos_fixtures import FIXTURES as PROMOS_FIXTURES
-from tests.mocks.giftcards_fixtures import FIXTURES as GIFTCARDS_FIXTURES   # NEW
+from tests.mocks.giftcards_fixtures import FIXTURES as GIFTCARDS_FIXTURES
+from tests.mocks.forms_fixtures import (   # NEW (Domain 10)
+    BUSINESS_ID    as FORMS_BIZ,
+    ANCHORS        as FORMS_ANCHORS,
+    SUBMISSIONS    as FORMS_SUBMISSIONS,
+    STUCK_THRESHOLD as FORMS_STUCK_THRESHOLD,
+)
 
 
 # ── Merge 2026 data into appointments fixtures ────────────────────────────────
@@ -83,7 +92,7 @@ _staff_fixtures = {
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.9.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.10.0")
 
 # Merge all fixtures into one lookup
 ALL_FIXTURES: dict[str, dict] = {
@@ -371,6 +380,138 @@ app.add_api_route(
 )
 
 
+# ── Forms endpoints (4) ── NEW (Domain 10) ───────────────────────────────────
+# Forms uses a different request shape (date windows / snapshot dates as
+# pydantic models) and a {data, meta} envelope distinct from the {business_id,
+# data, meta} shape used by the older domains. Date-range filtering for the
+# monthly endpoint and the always-emit contract on lifecycle don't fit the
+# generic _make_handler factory, so each route gets its own handler.
+
+class FormsWindowRequest(BaseModel):
+    business_id: int
+    start_date: date
+    end_date: date
+
+
+class FormsSnapshotRequest(BaseModel):
+    business_id: int
+    snapshot_date: date
+
+
+class FormsLifecycleRequest(BaseModel):
+    business_id: int
+    snapshot_date: date
+
+
+def _serialize_dates(obj):
+    if isinstance(obj, dict):
+        return {k: _serialize_dates(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_serialize_dates(x) for x in obj]
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, date):
+        return obj.isoformat()
+    return obj
+
+
+def _forms_envelope(data, business_id: int) -> dict:
+    row_count = len(data) if isinstance(data, list) else 1
+    return {
+        "data": _serialize_dates(data),
+        "meta": {
+            "business_id":  business_id,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+            "row_count":    row_count,
+        },
+    }
+
+
+def _forms_auth_or_403(business_id: int):
+    if business_id not in AUTHORISED_BUSINESS_IDS:
+        return JSONResponse(
+            status_code=403,
+            content={"error": f"business_id {business_id} not authorised"},
+        )
+    return None
+
+
+@app.post("/api/v1/leo/forms/catalog-snapshot")
+async def forms_catalog_snapshot(req: FormsSnapshotRequest):
+    deny = _forms_auth_or_403(req.business_id)
+    if deny is not None:
+        return deny
+    if req.business_id != FORMS_BIZ:
+        return _forms_envelope({}, req.business_id)
+    return _forms_envelope(FORMS_ANCHORS["catalog"], req.business_id)
+
+
+@app.post("/api/v1/leo/forms/monthly")
+async def forms_monthly(req: FormsWindowRequest):
+    deny = _forms_auth_or_403(req.business_id)
+    if deny is not None:
+        return deny
+    if req.business_id != FORMS_BIZ:
+        return _forms_envelope([], req.business_id)
+    rows = [
+        r for r in FORMS_ANCHORS["monthly"]
+        if req.start_date <= r["period_start"] <= req.end_date
+    ]
+    return _forms_envelope(rows, req.business_id)
+
+
+@app.post("/api/v1/leo/forms/per-form-snapshot")
+async def forms_per_form_snapshot(req: FormsSnapshotRequest):
+    deny = _forms_auth_or_403(req.business_id)
+    if deny is not None:
+        return deny
+    if req.business_id != FORMS_BIZ:
+        return _forms_envelope([], req.business_id)
+    return _forms_envelope(FORMS_ANCHORS["per_form"], req.business_id)
+
+
+@app.post("/api/v1/leo/forms/lifecycle-snapshot")
+async def forms_lifecycle_snapshot(req: FormsLifecycleRequest):
+    # ALWAYS-EMIT contract (FQ4): even when the biz has no submissions, the
+    # response must include a single zero-row object so the doc generator can
+    # answer "no forms data" without erroring.
+    deny = _forms_auth_or_403(req.business_id)
+    if deny is not None:
+        return deny
+    if req.business_id != FORMS_BIZ:
+        return _forms_envelope({
+            "snapshot_date":               req.snapshot_date,
+            "total_submissions":           0,
+            "ready_count":                 0,
+            "complete_count":              0,
+            "approved_count":              0,
+            "unknown_status_count":        0,
+            "completion_rate_pct":         None,
+            "stuck_ready_count":           0,
+            "stuck_ready_total_age_days":  0,
+            "most_recent_submission_at":   None,
+            "stuck_ready_submission_ids":  [],
+        }, req.business_id)
+
+    stuck = [
+        s for s in FORMS_SUBMISSIONS
+        if s["Status"] == "ready" and s["RecDate"].date() < FORMS_STUCK_THRESHOLD
+    ]
+    total_age = sum((req.snapshot_date - s["RecDate"].date()).days for s in stuck)
+
+    out = dict(FORMS_ANCHORS["lifecycle"])
+    out["stuck_ready_total_age_days"] = total_age
+    return _forms_envelope(out, req.business_id)
+
+
+FORMS_PATHS = [
+    "/api/v1/leo/forms/catalog-snapshot",
+    "/api/v1/leo/forms/monthly",
+    "/api/v1/leo/forms/per-form-snapshot",
+    "/api/v1/leo/forms/lifecycle-snapshot",
+]
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -378,7 +519,7 @@ async def health():
     return {
         "status": "ok",
         "mode": "mock",
-        "version": "1.9.0",
+        "version": "1.10.0",
         "endpoints": {
             "revenue":      len(REVENUE_PATHS),
             "appointments": len(APPOINTMENTS_PATHS),
@@ -388,8 +529,9 @@ async def health():
             "marketing":    len(MARKETING_PATHS),
             "expenses":     len(EXPENSES_PATHS),
             "promos":       len(PROMOS_STANDARD_PATHS) + 2,   # +2 for shape-switched /codes and /locations
-            "giftcards":    len(GIFTCARDS_PATHS),              # NEW — 8 simple POST routes
-            "total":        len(ALL_PATHS) + 3,   # +1 staff-perf, +2 shape-switched promos
+            "giftcards":    len(GIFTCARDS_PATHS),
+            "forms":        len(FORMS_PATHS),                  # NEW — 4 custom-handler routes
+            "total":        len(ALL_PATHS) + 3 + len(FORMS_PATHS),  # +1 staff-perf, +2 shape-switched promos, +4 forms
         },
     }
 
@@ -449,7 +591,7 @@ def start_mock_server() -> MockAnalyticsServer:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting LEO Mock Analytics Server v1.9.0 on http://localhost:8001")
+    print("Starting LEO Mock Analytics Server v1.10.0 on http://localhost:8001")
     print()
     print("Revenue endpoints (6):")
     for p in REVENUE_PATHS:
@@ -485,10 +627,14 @@ if __name__ == "__main__":
     print("  POST /api/v1/leo/promos/codes      {granularity: 'monthly'|'window'}")
     print("  POST /api/v1/leo/promos/locations  {shape: 'rollup'|'by_code'}")
     print()
-    print("Giftcards endpoints (8):")   # NEW
+    print("Giftcards endpoints (8):")
     for p in GIFTCARDS_PATHS:
         print(f"  POST {p}")
     print()
-    print(f"Total: {len(ALL_PATHS) + 3} endpoints")
+    print("Forms endpoints (4):")   # NEW (Domain 10)
+    for p in FORMS_PATHS:
+        print(f"  POST {p}")
+    print()
+    print(f"Total: {len(ALL_PATHS) + 3 + len(FORMS_PATHS)} endpoints")
     print("Health: GET http://localhost:8001/health")
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)

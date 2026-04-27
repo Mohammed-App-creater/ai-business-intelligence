@@ -307,6 +307,90 @@ PROMOS_KEYWORDS: list[str] = [
     "avg discount per redemption",
 ]
 
+FORMS_KEYWORDS: list[str] = [
+    # ── Core nouns: F1, F3, F4, F5, F7 ──────────────────────────────────────
+    "form",
+    "forms",
+    "form template",
+    "form templates",
+    "template",
+    "templates",
+    "submission",
+    "submissions",
+    "form submission",
+    "form submissions",
+
+    # ── Vocabulary variants: F12, F13 ──────────────────────────────────────
+    "questionnaire",
+    "questionnaires",
+    "intake",
+    "intake form",
+    "intake forms",
+    "intake questionnaire",
+    "feedback form",
+    "feedback forms",
+    "consent form",
+    "consent forms",
+    "customer form",
+    "customer forms",
+    "client form",
+    "client forms",
+
+    # ── Verbs around submissions: F2, F4, F5, F6 ──────────────────────────
+    "submitted",
+    "filling out",
+    "filled out",
+    "fill out",
+    "completing",
+    "completed",
+    "submitting",
+
+    # ── Status terms: F9, F10, F13 ─────────────────────────────────────────
+    "completion rate",
+    "completion",
+    "stuck",
+    "waiting",
+    "pending",
+    "in progress",
+    "ready",
+    "approved",
+    "complete",
+
+    # ── Trends + counting: F2, F4, F5, F6 ──────────────────────────────────
+    "how many forms",
+    "form count",
+    "forms received",
+    "submission count",
+    "submission trend",
+    "form trend",
+    "submissions over",
+    "forms last month",
+    "forms this month",
+    "forms this year",
+
+    # ── Rankings / which form: F7, F8 ──────────────────────────────────────
+    "most submitted",
+    "most-submitted",
+    "most popular form",
+    "which form",
+    "top form",
+    "dormant form",
+    "dormant forms",
+    "unused form",
+    "unused forms",
+    "never submitted",
+    "no submissions",
+
+    # ── Advice: F11 ────────────────────────────────────────────────────────
+    "deactivate",
+    "deactivate forms",
+    "remove forms",
+    "clean up forms",
+    "should i remove",
+    "should i deactivate",
+    "form cleanup",
+]
+
 RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
     "financial": REVENUE_KEYWORD_GROUP["financial"],
     "appointments": [
@@ -584,6 +668,7 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
         "which branch spends",
     ],
     "giftcards": GIFTCARDS_KEYWORDS,
+    "forms": FORMS_KEYWORDS,
     "staff": [
         # Core staff vocabulary
         "staff", "employee", "employees", "team", "stylist", "therapist",
