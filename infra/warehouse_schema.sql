@@ -2096,3 +2096,115 @@ CREATE INDEX IF NOT EXISTS idx_wh_form_lifecycle_biz
 -- ============================================================================
 -- End of DDL — 4 tables, 5 indexes
 -- ============================================================================
+
+
+
+-- ============================================================================
+--  Memberships Domain — Warehouse Tables
+--  Step 4: ETL Wire-Up
+-- ============================================================================
+--  Two tables, mirroring the two API endpoints:
+--    wh_membership_units    (Set A — unit grain)
+--    wh_membership_monthly  (Set B — location-month grain)
+--
+--  Both keyed on business_id for tenant isolation.
+-- ============================================================================
+
+
+-- ─── Set A: Unit-grain memberships snapshot ─────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_membership_units (
+    -- Tenant + snapshot
+    business_id                  INT          NOT NULL,
+    as_of_date                   DATE         NOT NULL,
+
+    -- Subscription identity
+    subscription_id              INT          NOT NULL,
+    location_id                  INT          NOT NULL,
+    customer_id                  INT          NOT NULL,
+    customer_name                TEXT,
+    service_id                   INT          NOT NULL,
+    service_name                 TEXT,
+
+    -- Pricing
+    amount                       DECIMAL(10,2) NOT NULL,
+    discount                     DECIMAL(10,2) NOT NULL DEFAULT 0,
+    net_amount                   DECIMAL(10,2) NOT NULL,
+    interval_days                INT          NOT NULL,
+    interval_bucket              TEXT         NOT NULL,
+    monthly_equivalent_revenue   DECIMAL(10,2) NOT NULL,
+    estimated_ltv                DECIMAL(10,2) NOT NULL DEFAULT 0,
+
+    -- Lifecycle
+    created_at                   TIMESTAMPTZ  NOT NULL,
+    canceled_at                  TIMESTAMPTZ,
+    is_active                    SMALLINT     NOT NULL,
+    is_reactivation              SMALLINT     NOT NULL DEFAULT 0,
+    tenure_days                  INT          NOT NULL,
+
+    -- Billing
+    next_execution_date          TIMESTAMPTZ,
+    days_until_next_charge       INT,
+    is_due_in_7_days             SMALLINT     NOT NULL DEFAULT 0,
+    total_charge_count           INT          NOT NULL DEFAULT 0,
+    approved_charge_count        INT          NOT NULL DEFAULT 0,
+    failed_charge_count          INT          NOT NULL DEFAULT 0,
+    total_billed                 DECIMAL(10,2) NOT NULL DEFAULT 0,
+    last_successful_charge_at    TIMESTAMPTZ,
+    days_since_last_charge       INT,
+
+    -- Usage (G2 heuristic)
+    visit_count_in_window        INT          NOT NULL DEFAULT 0,
+    last_visit_at                TIMESTAMPTZ,
+    is_used                      SMALLINT     NOT NULL DEFAULT 0,
+
+    -- Bookkeeping
+    etl_run_at                   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, as_of_date, subscription_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_mem_units_biz_active
+    ON wh_membership_units (business_id, is_active);
+CREATE INDEX IF NOT EXISTS idx_wh_mem_units_biz_loc
+    ON wh_membership_units (business_id, location_id);
+CREATE INDEX IF NOT EXISTS idx_wh_mem_units_biz_service
+    ON wh_membership_units (business_id, service_id);
+CREATE INDEX IF NOT EXISTS idx_wh_mem_units_biz_due
+    ON wh_membership_units (business_id, is_due_in_7_days)
+    WHERE is_due_in_7_days = 1;
+
+
+-- ─── Set B: Monthly summary per location ───────────────────────────────────
+CREATE TABLE IF NOT EXISTS wh_membership_monthly (
+    business_id          INT          NOT NULL,
+    location_id          INT          NOT NULL,
+    month_start          DATE         NOT NULL,
+
+    -- Flow metrics
+    new_signups          INT          NOT NULL DEFAULT 0,
+    reactivations        INT          NOT NULL DEFAULT 0,
+    cancellations        INT          NOT NULL DEFAULT 0,
+
+    -- Stock metrics
+    active_at_month_end  INT          NOT NULL DEFAULT 0,
+    mrr                  DECIMAL(10,2) NOT NULL DEFAULT 0,
+    avg_discount         DECIMAL(10,2),
+
+    -- Billing for the month
+    gross_billed         DECIMAL(10,2) NOT NULL DEFAULT 0,
+    approved_charges     INT          NOT NULL DEFAULT 0,
+    failed_charges       INT          NOT NULL DEFAULT 0,
+
+    -- Trend (LAG-derived by backend)
+    prev_mrr             DECIMAL(10,2),
+    mrr_mom_pct          DECIMAL(8,2),
+    prev_active          INT,
+    churn_rate_pct       DECIMAL(8,2),
+
+    etl_run_at           TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+
+    PRIMARY KEY (business_id, location_id, month_start)
+);
+
+CREATE INDEX IF NOT EXISTS idx_wh_mem_monthly_biz_month
+    ON wh_membership_monthly (business_id, month_start);

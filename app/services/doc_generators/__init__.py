@@ -39,6 +39,8 @@ from app.services.doc_generators.domains.giftcards import generate_giftcards_doc
 from etl.transforms.giftcards_etl import GiftcardsExtractor
 from app.services.doc_generators.domains.forms import generate_forms_docs
 from etl.transforms.forms_etl import FormsExtractor
+from app.services.doc_generators.domains.memberships import generate_membership_docs
+from etl.transforms.memberships_etl import MembershipsExtractor
 
 _DOMAIN_HANDLERS: dict[str, str] = {
     "staff":         "_gen_staff",
@@ -55,6 +57,7 @@ _DOMAIN_HANDLERS: dict[str, str] = {
     "campaigns":     "_gen_campaigns",
     "attendance":    "_gen_attendance",
     "subscriptions": "_gen_subscriptions",
+    "memberships":   "_gen_memberships",
 }
 
 # Order used when domain=None (revenue uses ETL analytics + generate_revenue_docs).
@@ -1252,6 +1255,60 @@ class DocGenerator:
         )
         result = await generate_appointments_docs(
             org_id, warehouse_rows, self._emb, self._vs, force
+        )
+        return (
+            result["docs_created"],
+            result["docs_skipped"],
+            result["docs_failed"],
+        )
+
+    async def _fetch_memberships_warehouse_rows(
+        self,
+        org_id: int,
+        period_start: date | None,
+        months: int,
+    ) -> dict:
+        periods = self._month_periods(period_start, months)
+        if not periods:
+            return {
+                "units":      [],
+                "monthly":    [],
+                "as_of_date": None,
+                "counts":     {},
+            }
+        start_date = periods[0]
+        last = periods[-1]
+        last_day = monthrange(last.year, last.month)[1]
+        end_date = date(last.year, last.month, last_day)
+
+        client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        extractor = MembershipsExtractor(client=client, wh_pool=self._wh._pool)
+        return await extractor.run(
+            business_id=org_id,
+            start_date=start_date,
+            end_date=end_date,
+            as_of_date=end_date,
+        )
+
+    async def _gen_memberships(
+        self, org_id: int, period_start: date | None, months: int, force: bool
+    ) -> tuple[int, int, int]:
+        warehouse_rows = await self._fetch_memberships_warehouse_rows(
+            org_id, period_start, months,
+        )
+        result = await generate_membership_docs(
+            org_id=org_id,
+            warehouse_rows=warehouse_rows,
+            embedding_client=self._emb,
+            vector_store=self._vs,
+            force=force,
+        )
+        counts = warehouse_rows.get("counts") or {}
+        self._logger.info(
+            "memberships ETL complete for org=%d — units=%d monthly=%d",
+            org_id,
+            counts.get("units", 0),
+            counts.get("monthly", 0),
         )
         return (
             result["docs_created"],
