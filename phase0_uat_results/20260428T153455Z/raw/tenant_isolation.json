@@ -1,0 +1,29 @@
+{
+  "request_url": "https://uat-ext-api-a3bre0gyhzaxhbau.eastus2-01.azurewebsites.net/analytics/128/appointments/monthly-summary?from=2025-10-01&to=2026-03-31",
+  "request_method": "GET",
+  "request_params": {
+    "from": "2025-10-01",
+    "to": "2026-03-31"
+  },
+  "status": 401,
+  "headers": {
+    "content-length": "0",
+    "date": "Tue, 28 Apr 2026 15:34:58 GMT",
+    "server": "Microsoft-IIS/10.0",
+    "www-authenticate": "Bearer",
+    "strict-transport-security": "max-age=31536000; includeSubDomains; preload",
+    "x-xss-protection": "1; mode=block",
+    "x-content-type-options": "nosniff",
+    "x-frame-options": "DENY",
+    "referrer-policy": "strict-origin-when-cross-origin",
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+    "permissions-policy": "geolocation=(), camera=(), microphone=()",
+    "cross-origin-opener-policy": "same-origin",
+    "cross-origin-embedder-policy": "require-corp",
+    "x-powered-by": "ASP.NET"
+  },
+  "body": null,
+  "body_raw": "",
+  "elapsed_ms": 46,
+  "error": null
+}
