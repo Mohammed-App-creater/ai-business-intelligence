@@ -58,6 +58,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Optional
 
 import httpx
@@ -67,8 +68,22 @@ import httpx
 # ─────────────────────────────────────────────────────────────────────────────
 
 CHAT_ENDPOINT   = "http://localhost:8000/api/v1/chat"
-BUSINESS_ID     = "42"
+BUSINESS_ID     = "40"
 REQUEST_TIMEOUT = 30.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Embed window — MUST match the --start-date / --end-date passed to
+# embed_documents.py for this sprint. If these differ from the embed run,
+# the harness will warn at startup. Keep this in sync with STAFF_KNOWN_ISSUES.md.
+# ─────────────────────────────────────────────────────────────────────────────
+EMBED_START = date(2025, 10, 1)
+EMBED_END   = date(2026, 3, 31)
+
+# Test window — questions span 2025 fixture history (Q5 Tom Rivera, Q7 "second half
+# of 2025") through "last month" / "Q1 2026" references. Declared explicitly because
+# it extends earlier than EMBED_START — a deliberate mismatch the banner will flag.
+TEST_START = date(2025, 1, 1)
+TEST_END   = date(2026, 3, 31)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 40 Test questions — all from Step 1
@@ -528,9 +543,13 @@ async def run(
 
     print(f"\n{'═'*62}")
     print(f"  LEO AI BI — Step 6: Staff Performance Domain Test")
-    print(f"  Questions   : {len(questions_to_run)}")
-    print(f"  Endpoint    : {endpoint}")
-    print(f"  business_id : {business_id}")
+    print(f"  Questions    : {len(questions_to_run)}")
+    print(f"  Endpoint     : {endpoint}")
+    print(f"  business_id  : {business_id}")
+    print(f"  Embed window : {EMBED_START.isoformat()} → {EMBED_END.isoformat()}")
+    print(f"  Test  window : {TEST_START.isoformat()} → {TEST_END.isoformat()}")
+    if TEST_START < EMBED_START or TEST_END > EMBED_END:
+        print(f"  ⚠️  WARNING: test window extends beyond embed window — expect false negatives")
     print(f"{'═'*62}\n")
 
     results: list[QuestionResult] = []

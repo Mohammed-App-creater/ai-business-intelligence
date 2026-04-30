@@ -43,6 +43,34 @@ from app.services.analytics_client import AnalyticsClient
 logger = logging.getLogger(__name__)
 
 
+def _normalize_hire_date(raw):
+    """
+    Coerce backend hire_date payloads to a date or None.
+
+    Handles:
+      - None / "" / 0 → None
+      - .NET DateTime.MinValue sentinel "0001-01-01..." → None
+      - ISO date "2024-04-08" → date(2024, 4, 8)
+      - ISO datetime "2024-04-08T00:00:00" → date(2024, 4, 8) (strips time portion)
+
+    Never raises. Returns None on any parse failure rather than crashing the batch.
+    """
+    if not raw:
+        return None
+    s = str(raw).strip()
+    if not s:
+        return None
+    # Strip time portion if present — date.fromisoformat doesn't accept it
+    date_part = s.split("T", 1)[0].split(" ", 1)[0]
+    # .NET DateTime.MinValue sentinel — semantically "no date set"
+    if date_part.startswith("0001-01-01"):
+        return None
+    try:
+        return date.fromisoformat(date_part)
+    except (ValueError, TypeError):
+        return None
+
+
 class StaffExtractor:
     """
     Pulls and transforms all staff performance data for one tenant.
@@ -189,11 +217,7 @@ ON CONFLICT (business_id, employee_id, location_id, period_start) DO UPDATE SET
             ps = date(y, m, 1)
             pe = date(y, m, monthrange(y, m)[1])
 
-            # hire_date from ISO string → date (may be None in edge cases)
-            hire_raw = r.get("hire_date")
-            hire_date = (
-                date.fromisoformat(hire_raw) if hire_raw else None
-            )
+            hire_date = r.get("hire_date")  # already a date or None — normalized in transform
 
             records.append((
                 r["tenant_id"],
@@ -263,8 +287,7 @@ ON CONFLICT (business_id, employee_id) DO UPDATE SET
 """
         records = []
         for r in rows:
-            hire_raw  = r.get("hire_date")
-            hire_date = date.fromisoformat(hire_raw) if hire_raw else None
+            hire_date = r.get("hire_date")  # already a date or None — normalized in transform
 
             records.append((
                 r["tenant_id"],
@@ -346,6 +369,7 @@ ON CONFLICT (business_id, employee_id, location_id, period_start) DO UPDATE SET
         """
         docs = []
         for row in rows:
+            hire_date = _normalize_hire_date(row.get("hire_date"))
             docs.append({
                 # Routing keys
                 "tenant_id":                business_id,
@@ -358,7 +382,7 @@ ON CONFLICT (business_id, employee_id, location_id, period_start) DO UPDATE SET
                 "staff_first_name":         row.get("staff_first_name", ""),
                 "staff_last_name":          row.get("staff_last_name", ""),
                 "is_active":                row.get("is_active", True),
-                "hire_date":                row.get("hire_date"),
+                "hire_date":                hire_date,
                 "location_id":              row.get("location_id", 0),
                 "location_name":            row.get("location_name", ""),
                 "period_label":             row.get("period_label", ""),
@@ -394,6 +418,7 @@ ON CONFLICT (business_id, employee_id, location_id, period_start) DO UPDATE SET
         """
         docs = []
         for row in rows:
+            hire_date = _normalize_hire_date(row.get("hire_date"))
             docs.append({
                 "tenant_id":                        business_id,
                 "doc_type":                         "staff_summary",
@@ -404,7 +429,7 @@ ON CONFLICT (business_id, employee_id, location_id, period_start) DO UPDATE SET
                 "staff_first_name":                 row.get("staff_first_name", ""),
                 "staff_last_name":                  row.get("staff_last_name", ""),
                 "is_active":                        row.get("is_active", True),
-                "hire_date":                        row.get("hire_date"),
+                "hire_date":                        hire_date,
 
                 "first_active_period":              row.get("first_active_period"),
                 "last_active_period":               row.get("last_active_period"),
