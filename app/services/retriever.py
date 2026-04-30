@@ -42,6 +42,7 @@ KEYWORD_GROUP_TO_DOMAINS: dict[str, list[str] | None] = {
     "expenses":         ["expenses"],
     "giftcards":        ["giftcards"],
     "forms":            ["forms"],
+    "memberships":      ["memberships"],
     "analytics":        None,   # broad question → search all domains
     "time_comparisons": None,   # modifier, not a domain by itself
 }
@@ -323,6 +324,8 @@ class Retriever:
                 # or hallucinates. Top-k=15 gives enough breadth for
                 # most multi-dimension questions.
                 _top_k = 15
+            elif domains[0] == "memberships":
+                _top_k = 12
             else:
                 _top_k = 5
 

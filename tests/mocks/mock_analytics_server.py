@@ -11,7 +11,8 @@ A lightweight FastAPI server that returns fixture data for all endpoints:
   - 6 expenses endpoints
   - 4 promos endpoints (+ 2 shape-switched aliases)
   - 8 giftcards endpoints      (Domain 9)
-  - 4 forms endpoints          ← NEW (Domain 10)
+  - 4 forms endpoints          (Domain 10)
+  - 2 memberships endpoints    ← NEW (Domain 11)
 
 Run this locally while the real Analytics Backend is under development —
 the ETL, embeddings, and chat pipeline can all be tested end-to-end without
@@ -36,7 +37,7 @@ import threading
 from datetime import date, datetime
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -58,11 +59,15 @@ from tests.mocks.marketing_fixtures import FIXTURES as MARKETING_FIXTURES
 from tests.mocks.expenses_fixtures import FIXTURES as EXPENSES_FIXTURES
 from tests.mocks.promos_fixtures import FIXTURES as PROMOS_FIXTURES
 from tests.mocks.giftcards_fixtures import FIXTURES as GIFTCARDS_FIXTURES
-from tests.mocks.forms_fixtures import (   # NEW (Domain 10)
+from tests.mocks.forms_fixtures import (   # (Domain 10)
     BUSINESS_ID    as FORMS_BIZ,
     ANCHORS        as FORMS_ANCHORS,
     SUBMISSIONS    as FORMS_SUBMISSIONS,
     STUCK_THRESHOLD as FORMS_STUCK_THRESHOLD,
+)
+from tests.mocks.memberships_fixtures import (   # NEW (Domain 11)
+    get_memberships_fixture,
+    get_memberships_monthly_fixture,
 )
 
 
@@ -92,7 +97,7 @@ _staff_fixtures = {
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
-app = FastAPI(title="LEO Mock Analytics Server", version="1.10.0")
+app = FastAPI(title="LEO Mock Analytics Server", version="1.11.0")
 
 # Merge all fixtures into one lookup
 ALL_FIXTURES: dict[str, dict] = {
@@ -512,6 +517,47 @@ FORMS_PATHS = [
 ]
 
 
+# ── Memberships endpoints (2) ── NEW (Domain 11) ──────────────────────────────
+# Memberships uses GET with query params (different from the POST-with-body
+# pattern used by older domains). The fixtures already build their own envelope
+# (business_id, as_of_date, generated_at, row_count, data) and handle tenant
+# isolation by returning empty data for unknown business_ids.
+
+@app.get("/api/v1/analytics/memberships")
+def memberships(
+    business_id: int = Query(..., description="Tenant ID — server-enforced in prod"),
+    as_of_date: date | None = Query(None, description="Snapshot date; defaults to today"),
+    include_canceled: bool = Query(True, description="Include canceled memberships"),
+):
+    """Set A — unit-grain memberships."""
+    payload = get_memberships_fixture(business_id, as_of_date)
+    if not include_canceled:
+        payload["data"] = [r for r in payload["data"] if r["is_active"] == 1]
+        payload["row_count"] = len(payload["data"])
+    return payload
+
+
+@app.get("/api/v1/analytics/memberships/monthly")
+def memberships_monthly(
+    business_id: int = Query(...),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+):
+    """Set B — location-month rollup."""
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+    months_in_range = (end_date.year - start_date.year) * 12 + (end_date.month - start_date.month) + 1
+    if months_in_range > 36:
+        raise HTTPException(status_code=400, detail="Max date range is 36 months")
+    return get_memberships_monthly_fixture(business_id, start_date, end_date)
+
+
+MEMBERSHIPS_PATHS = [
+    "/api/v1/analytics/memberships",
+    "/api/v1/analytics/memberships/monthly",
+]
+
+
 # ── Health check ──────────────────────────────────────────────────────────────
 
 @app.get("/health")
@@ -519,7 +565,7 @@ async def health():
     return {
         "status": "ok",
         "mode": "mock",
-        "version": "1.10.0",
+        "version": "1.11.0",
         "endpoints": {
             "revenue":      len(REVENUE_PATHS),
             "appointments": len(APPOINTMENTS_PATHS),
@@ -530,8 +576,9 @@ async def health():
             "expenses":     len(EXPENSES_PATHS),
             "promos":       len(PROMOS_STANDARD_PATHS) + 2,   # +2 for shape-switched /codes and /locations
             "giftcards":    len(GIFTCARDS_PATHS),
-            "forms":        len(FORMS_PATHS),                  # NEW — 4 custom-handler routes
-            "total":        len(ALL_PATHS) + 3 + len(FORMS_PATHS),  # +1 staff-perf, +2 shape-switched promos, +4 forms
+            "forms":        len(FORMS_PATHS),                  # 4 custom-handler routes
+            "memberships":  len(MEMBERSHIPS_PATHS),             # NEW — 2 GET routes
+            "total":        len(ALL_PATHS) + 3 + len(FORMS_PATHS) + len(MEMBERSHIPS_PATHS),
         },
     }
 
@@ -591,7 +638,7 @@ def start_mock_server() -> MockAnalyticsServer:
 # ── Standalone entry point ────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("Starting LEO Mock Analytics Server v1.10.0 on http://localhost:8001")
+    print("Starting LEO Mock Analytics Server v1.11.0 on http://localhost:8001")
     print()
     print("Revenue endpoints (6):")
     for p in REVENUE_PATHS:
@@ -631,10 +678,14 @@ if __name__ == "__main__":
     for p in GIFTCARDS_PATHS:
         print(f"  POST {p}")
     print()
-    print("Forms endpoints (4):")   # NEW (Domain 10)
+    print("Forms endpoints (4):")   # (Domain 10)
     for p in FORMS_PATHS:
         print(f"  POST {p}")
     print()
-    print(f"Total: {len(ALL_PATHS) + 3 + len(FORMS_PATHS)} endpoints")
+    print("Memberships endpoints (2):")   # NEW (Domain 11)
+    for p in MEMBERSHIPS_PATHS:
+        print(f"  GET  {p}")
+    print()
+    print(f"Total: {len(ALL_PATHS) + 3 + len(FORMS_PATHS) + len(MEMBERSHIPS_PATHS)} endpoints")
     print("Health: GET http://localhost:8001/health")
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)

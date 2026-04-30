@@ -90,7 +90,7 @@ class AnalyticsClient:
     Sprint 4  — services     ✅
     Sprint 5  — clients      ✅
     Sprint 6  — marketing    ✅
-    Sprint 7  — memberships  ⬜
+    Sprint 7  — memberships  ✅
     Sprint 8  — giftcards    ✅
     Sprint 9  — promos       ✅
     Sprint 10 — expenses     ✅
@@ -978,6 +978,77 @@ class AnalyticsClient:
         )
         return body.get("data", [])
 
+    # ── MEMBERSHIPS DOMAIN ────────────────────────────────────────────────────
+    # 2 endpoints, GET + query string (different shape from POST domains).
+    # Sprint 7 — memberships
+
+    async def get_memberships(
+        self,
+        business_id: int,
+        as_of_date: Optional[date] = None,
+        include_canceled: bool = True,
+    ) -> dict:
+        """
+        Set A — unit-grain memberships snapshot.
+        GET /api/v1/analytics/memberships
+
+        Returns the full payload:
+            {
+              "business_id":  int,
+              "as_of_date":   "YYYY-MM-DD",
+              "generated_at": ISO-8601 Zulu,
+              "row_count":    int,
+              "data":         [ {membership row}, ... ]
+            }
+
+        Powers questions: Q1, Q3, Q8, Q9, Q10, Q11, Q13, Q15, Q17, Q18, Q19,
+                          Q20, Q21, M-LQ1, M-LQ2, M-LQ6
+        """
+        params: dict = {
+            "business_id":      business_id,
+            "include_canceled": str(include_canceled).lower(),
+        }
+        if as_of_date is not None:
+            params["as_of_date"] = as_of_date.isoformat()
+        return await self._get(
+            f"{self.base_url}/api/v1/analytics/memberships",
+            params=params,
+        )
+
+    async def get_memberships_monthly(
+        self,
+        business_id: int,
+        start_date: date,
+        end_date: date,
+    ) -> dict:
+        """
+        Set B — location-month rollup.
+        GET /api/v1/analytics/memberships/monthly
+
+        Returns the full payload:
+            {
+              "business_id":  int,
+              "period_start": "YYYY-MM-DD",
+              "period_end":   "YYYY-MM-DD",
+              "generated_at": ISO-8601 Zulu,
+              "row_count":    int,
+              "data":         [ {monthly row}, ... ]
+            }
+
+        Powers questions: Q2, Q4, Q5, Q6, Q7, Q12, Q14,
+                          M-LQ3, M-LQ4, M-LQ5, M-LQ7, M-LQ8
+
+        Max date range: 36 months. Backend returns 400 if exceeded.
+        """
+        return await self._get(
+            f"{self.base_url}/api/v1/analytics/memberships/monthly",
+            params={
+                "business_id": business_id,
+                "start_date":  start_date.isoformat(),
+                "end_date":    end_date.isoformat(),
+            },
+        )
+
     # ── PROMOS DOMAIN ─────────────────────────────────────────────────────────
     # 6 endpoints, same POST + JSON body pattern as all other domains.
     # Sprint 8 — promos
@@ -1656,6 +1727,25 @@ class AnalyticsClient:
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(url, json=payload, headers=self._auth_headers)
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Analytics API HTTP error: %s %s → %s",
+                e.request.method,
+                e.request.url,
+                e.response.status_code,
+            )
+            raise
+        except httpx.RequestError as e:
+            logger.error("Analytics API request failed: %s", e)
+            raise
+
+    async def _get(self, url: str, *, params: dict | None = None) -> dict:
+        """Returns the full response body for GET endpoints (memberships domain)."""
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(url, params=params, headers=self._auth_headers)
                 response.raise_for_status()
                 return response.json()
         except httpx.HTTPStatusError as e:

@@ -669,6 +669,46 @@ RAG_KEYWORD_GROUPS: dict[str, list[str]] = {
     ],
     "giftcards": GIFTCARDS_KEYWORDS,
     "forms": FORMS_KEYWORDS,
+    "memberships": [
+        # ── Core nouns ──────────────────────────────────────────────────
+        "membership", "memberships",
+        "subscription", "subscriptions",
+        "recurring", "recurring billing", "recurring payment",
+
+        # ── State / counts ──────────────────────────────────────────────
+        "active member", "active members",
+        "active membership", "active memberships",
+        "member base", "membership base",
+        "new member", "new members",
+        "new membership", "new memberships",
+        "membership signup", "membership signups",
+
+        # ── Lifecycle ───────────────────────────────────────────────────
+        "cancel membership", "cancel my membership",
+        "members cancel", "members canceled", "members cancelled",
+        "members canceling", "members cancelling",
+        "membership cancel", "membership cancellation", "membership cancellations",
+        "membership churn",
+        "reactivation", "reactivate", "reactivated", "resigned",
+
+        # ── Pricing & cadence ───────────────────────────────────────────
+        "mrr", "monthly recurring revenue",
+        "membership revenue", "membership pricing",
+        "billing cycle", "billing interval",
+        "weekly plan", "bi-weekly plan", "monthly plan", "quarterly plan",
+        "membership discount",
+
+        # ── Billing health ──────────────────────────────────────────────
+        "membership payment", "membership payments",
+        "next charge", "payment due",
+        "due in 7 days", "due in the next",
+        "failed membership payment", "membership payment failed",
+
+        # ── Value & engagement ──────────────────────────────────────────
+        "membership ltv", "membership lifetime value",
+        "membership tenure", "long-tenured member",
+        "unused membership", "ghost member",
+    ],
     "staff": [
         # Core staff vocabulary
         "staff", "employee", "employees", "team", "stylist", "therapist",
@@ -1063,6 +1103,16 @@ class QueryAnalyzer:
             "drained but active gift cards",
             "deactivated gift cards count",
             "refunded gift card redemptions",
+
+            # ── Memberships domain ────────────────────────────────────────────
+            "active memberships", "active members",
+            "membership base",
+            "membership revenue", "monthly recurring revenue",
+            "membership signups",
+            "membership churn", "members cancel",
+            "membership tenure",
+            "due in 7 days", "next charge",
+            "failed membership payment",
         ]
         if any(phrase in q_lower for phrase in _DATA_METRIC_OVERRIDES):
             matched = [p for p in _DATA_METRIC_OVERRIDES if p in q_lower]
