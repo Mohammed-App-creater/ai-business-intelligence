@@ -296,6 +296,28 @@ class ChatService:
             since_date=since_date,
         )
 
+        if ctx.total_results == 0:
+            latency = (time.perf_counter() - t0) * 1000
+            refusal_message = (
+                "I don't have enough data to answer that question. "
+                "It may relate to a person, period, or metric outside the available data."
+            )
+            logger.info(
+                "chat_service.rag.empty_sources business_id=%s question=%r "
+                "latency_ms=%.1f",
+                request.business_id,
+                request.question,
+                latency,
+            )
+            return ChatResponse(
+                answer=refusal_message,
+                route="RAG",
+                confidence=0.0,
+                sources=[],
+                conversation_id=request.conversation_id,
+                latency_ms=latency,
+            )
+
         # 3. Build RagChatData with retrieved documents.
         #    analysis_period gives the LLM concrete period anchoring —
         #    without it, "last month" / "this quarter" / "this year"
