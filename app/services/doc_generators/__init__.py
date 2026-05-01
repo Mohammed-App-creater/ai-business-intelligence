@@ -22,7 +22,7 @@ from app.services.llm.types import UseCase
 from app.services.vector_store import VectorStore
 from etl.transforms.revenue_etl import RevenueExtractor
 from app.services.doc_generators.domains.appointments import generate_appointments_docs
-from etl.transforms.appointments_etl import AppointmentsExtractor
+from etl.transforms.appointments_etl import AppointmentsExtractor  # analytics API → wh_appt_* (v2)
 from app.services.doc_generators.domains.staff import generate_staff_docs
 from etl.transforms.staff_etl import StaffExtractor
 from app.services.doc_generators.domains.services import generate_service_docs
@@ -628,6 +628,7 @@ class DocGenerator:
         last_day = monthrange(last.year, last.month)[1]
         end_date = date(last.year, last.month, last_day)
         client = AnalyticsClient(base_url=settings.ANALYTICS_BACKEND_URL)
+        # Analytics ``AppointmentsExtractor`` (etl.transforms.appointments_etl), not MySQL legacy.
         extractor = AppointmentsExtractor(client=client, wh_pool=self._wh._pool)
         return await extractor.run(org_id, start_date, end_date)
 

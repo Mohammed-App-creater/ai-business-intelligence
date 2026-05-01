@@ -7,7 +7,7 @@ Pulls Set A and Set B from the Analytics Backend, writes them to the
 warehouse tables (wh_membership_units, wh_membership_monthly), and
 returns the warehouse rows for downstream doc generation.
 
-Pattern matches AppointmentsExtractor / ClientsExtractor:
+Pattern matches ``etl.transforms.appointments_etl.AppointmentsExtractor`` / ``ClientsExtractor``:
     extractor = MembershipsExtractor(client=..., wh_pool=...)
     rows = await extractor.run(business_id, start_date, end_date)
     # rows is a dict ready for generate_membership_docs()

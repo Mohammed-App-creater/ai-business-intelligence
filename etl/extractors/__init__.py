@@ -1,4 +1,4 @@
-from .appointments import AppointmentsExtractor
+from .appointments import LegacyMysqlAppointmentMetricsExtractor
 from .attendance import AttendanceExtractor
 from .campaigns import CampaignsExtractor
 from .clients import ClientsExtractor
@@ -12,7 +12,7 @@ from .staff import StaffExtractor
 from .subscriptions import SubscriptionsExtractor
 
 __all__ = [
-    "AppointmentsExtractor",
+    "LegacyMysqlAppointmentMetricsExtractor",
     "AttendanceExtractor",
     "CampaignsExtractor",
     "ClientsExtractor",

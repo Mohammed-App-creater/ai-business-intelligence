@@ -1,4 +1,4 @@
-"""Tests for AppointmentsExtractor."""
+"""Tests for LegacyMysqlAppointmentMetricsExtractor (MySQL calendar/sign-in path)."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from etl.extractors.appointments import AppointmentsExtractor
+from etl.extractors.appointments import LegacyMysqlAppointmentMetricsExtractor
 from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE_START, make_mock_pool
 
 
@@ -14,7 +14,7 @@ from scripts.tests.extractor_test_utils import SAMPLE_END, SAMPLE_ORG_ID, SAMPLE
 async def test_appointments_returns_list() -> None:
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[[], [], []])
-    out = await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    out = await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     assert isinstance(out, list)
 
 
@@ -22,7 +22,7 @@ async def test_appointments_returns_list() -> None:
 async def test_appointments_empty_db_returns_empty_list() -> None:
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[[], [], []])
-    out = await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    out = await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     assert out == []
 
 
@@ -30,7 +30,7 @@ async def test_appointments_empty_db_returns_empty_list() -> None:
 async def test_appointments_passes_org_id_to_query() -> None:
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[[], [], []])
-    await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     for c in cursor.execute.await_args_list:
         assert SAMPLE_ORG_ID in c.args[1]
 
@@ -40,7 +40,7 @@ async def test_appointments_passes_date_range_to_query() -> None:
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[[], [], []])
     end_excl = SAMPLE_END + timedelta(days=1)
-    await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     for c in cursor.execute.await_args_list:
         assert c.args[1][1] == SAMPLE_START
         assert c.args[1][2] == end_excl
@@ -50,7 +50,7 @@ async def test_appointments_passes_date_range_to_query() -> None:
 async def test_appointments_query_contains_org_filter() -> None:
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[[], [], []])
-    await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     assert "OrganizationId" in cursor.execute.await_args_list[0].args[0]
     assert "OrgId" in cursor.execute.await_args_list[2].args[0]
 
@@ -59,7 +59,7 @@ async def test_appointments_query_contains_org_filter() -> None:
 async def test_appointments_runs_three_queries() -> None:
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[[], [], []])
-    await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     assert cursor.execute.await_count == 3
 
 
@@ -89,7 +89,7 @@ async def test_appointments_merges_walkin_count() -> None:
     ]
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[cal, [], signin])
-    out = await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    out = await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     match = next(r for r in out if r["location_id"] == 2)
     assert match["walkin_count"] == 3
     assert match["app_booking_count"] == 1
@@ -112,7 +112,7 @@ async def test_appointments_missing_walkin_gives_zero() -> None:
     ]
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[cal, [], []])
-    out = await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    out = await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     assert out[0]["walkin_count"] == 0
 
 
@@ -133,6 +133,6 @@ async def test_appointments_output_has_required_keys() -> None:
     ]
     pool, cursor = make_mock_pool()
     cursor.fetchall = AsyncMock(side_effect=[cal, [], []])
-    out = await AppointmentsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
+    out = await LegacyMysqlAppointmentMetricsExtractor(pool).extract(SAMPLE_ORG_ID, SAMPLE_START, SAMPLE_END)
     for k in ("walkin_count", "app_booking_count", "total_booked"):
         assert k in out[0]
