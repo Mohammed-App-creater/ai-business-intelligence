@@ -96,16 +96,33 @@ class LLMError(Exception):
     """Base class for all LLM layer errors."""
 
 
-class LLMTimeoutError(LLMError):
-    """Request exceeded the configured hard timeout."""
+class LLMRetryableError(LLMError):
+    """
+    Base class for errors the retry layer should retry.
+
+    Carries an optional ``retry_after_seconds`` extracted from a provider's
+    Retry-After header (when present). The retry wait callable prefers this
+    value over the exponential-backoff default.
+    """
+    def __init__(self, message: str = "", retry_after_seconds: Optional[float] = None):
+        super().__init__(message)
+        self.retry_after_seconds = retry_after_seconds
 
 
-class LLMRateLimitError(LLMError):
-    """Provider returned 429 and retries were exhausted."""
+class LLMTimeoutError(LLMRetryableError):
+    """Request exceeded the configured per-attempt hard timeout."""
+
+
+class LLMRateLimitError(LLMRetryableError):
+    """Provider returned 429 (or Anthropic 529 overloaded)."""
+
+
+class LLMTransientError(LLMRetryableError):
+    """Transient provider failure: connection error or 5xx."""
 
 
 class LLMProviderError(LLMError):
-    """Provider returned a non-retryable error (4xx / 5xx)."""
+    """Provider returned a non-retryable error (BadRequest / Auth / 4xx)."""
 
 
 class LLMJsonParseError(LLMError):
@@ -116,6 +133,6 @@ class LLMJsonParseError(LLMError):
     def __init__(self, message: str, raw_content: str):
         super().__init__(message)
         self.raw_content = raw_content
-        
+
 class LLMQuotaExceededError(Exception):
     """Tenant has exceeded their daily token quota."""

@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 from app.services.llm.types import (
     LLMRequest, LLMResponse, OutputMode, Provider, TokenUsage, UseCase,
-    LLMRateLimitError, LLMProviderError, LLMTimeoutError,
+    LLMRateLimitError, LLMProviderError, LLMTimeoutError, LLMTransientError,
 )
 from app.services.llm.llm_client import LLMClient
 from app.services.llm.llm_gateway import LLMGateway
@@ -95,6 +95,21 @@ def make_mock_provider(
 
 def make_rate_limit_then_succeed_provider(fail_times: int = 1):
     """Provider that raises RateLimitError `fail_times` then succeeds."""
+    return _make_failing_then_succeed_provider(
+        fail_times=fail_times,
+        exc_factory=lambda: LLMRateLimitError("429 rate limit"),
+    )
+
+
+def make_transient_then_succeed_provider(fail_times: int = 1):
+    """Provider that raises LLMTransientError `fail_times` then succeeds."""
+    return _make_failing_then_succeed_provider(
+        fail_times=fail_times,
+        exc_factory=lambda: LLMTransientError("transient connection error"),
+    )
+
+
+def _make_failing_then_succeed_provider(fail_times: int, exc_factory):
     call_count = [0]
 
     class Provider_:
@@ -108,7 +123,7 @@ def make_rate_limit_then_succeed_provider(fail_times: int = 1):
         async def complete(self, request: LLMRequest) -> LLMResponse:
             call_count[0] += 1
             if call_count[0] <= fail_times:
-                raise LLMRateLimitError("429 rate limit")
+                raise exc_factory()
             return LLMResponse(
                 content="ok",
                 parsed=None,

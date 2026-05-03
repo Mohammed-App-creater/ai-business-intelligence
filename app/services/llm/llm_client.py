@@ -4,9 +4,10 @@ llm_client.py
 The single HTTP wrapper for all LLM calls.
 
 Responsibilities:
-  - Hard async timeout via asyncio.wait_for
-  - Exponential backoff retry on 429 rate-limit errors (max 3 retries)
-  - Structured token usage logging per business_id and model
+  - Per-attempt hard timeout via asyncio.wait_for (each retry gets a fresh budget)
+  - tenacity-driven retry with exponential backoff + jitter on retryable errors
+  - Honors Retry-After header from the provider when present (capped at 30s)
+  - Structured token usage logging per business_id and model on every success
   - Sets was_retried=True on the response if any retry occurred
   - Provider-agnostic — works with any BaseLLMProvider implementation
 
@@ -15,19 +16,34 @@ NOT responsible for:
   - Output mode selection    (gateway)
   - Prompt construction      (prompts/)
   - Quota enforcement        (gateway)
+
+Retry policy (AI_BI_Architecture_v1.1 §5.7):
+  - Total attempts = 1 initial + max_retries (default: 1 + 2 = 3)
+  - Retry only on LLMRetryableError subclasses (rate limit / transient / timeout).
+    LLMProviderError (BadRequest, Auth, etc.) propagates immediately — these are
+    bugs in our request and retrying just hides the real problem.
+  - Wait: Retry-After header (capped 30s) when present, otherwise
+    wait_random_exponential(multiplier=1, max=30).
+  - SDK-level retries are disabled at the provider layer (max_retries=0) so this
+    is the single source of truth for retry behaviour.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from .base_provider import BaseLLMProvider
 from .types import (
-    LLMError,
-    LLMRateLimitError,
     LLMRequest,
     LLMResponse,
+    LLMRetryableError,
     LLMTimeoutError,
 )
 
@@ -35,11 +51,33 @@ logger = logging.getLogger(__name__)
 
 # Default hard timeout in seconds — below P95 latency target of 8s,
 # leaving headroom for the rest of the pipeline (Section 8.3).
+# TODO(AI_BI_Architecture_v1.1 §5.7): spec mandates 30s; deferred.
 DEFAULT_TIMEOUT_SECONDS = 7.0
 
-# Retry config — only for 429 rate-limit errors
-MAX_RETRIES      = 3
-BACKOFF_BASE_SEC = 1.0   # 1s → 2s → 4s
+# Retry config — applies to any LLMRetryableError. Total attempts = 1 + MAX_RETRIES.
+MAX_RETRIES = 2
+
+# Single-sleep cap — protects against runaway Retry-After values from misbehaving
+# providers and bounds the exponential backoff envelope.
+_MAX_SLEEP_SECONDS = 30.0
+
+# Module-level wait strategy. Exposed so tests can monkeypatch to bypass real waits.
+_DEFAULT_WAIT = wait_random_exponential(multiplier=1, max=_MAX_SLEEP_SECONDS)
+
+
+def _wait_strategy(retry_state) -> float:
+    """
+    tenacity wait callable.
+
+    If the most recent exception carries a retry_after_seconds (extracted by the
+    provider from the Retry-After header), honor it — capped at _MAX_SLEEP_SECONDS.
+    Otherwise fall back to exponential backoff with jitter.
+    """
+    outcome = retry_state.outcome
+    exc = outcome.exception() if outcome is not None else None
+    if isinstance(exc, LLMRetryableError) and exc.retry_after_seconds is not None:
+        return min(max(exc.retry_after_seconds, 0.0), _MAX_SLEEP_SECONDS)
+    return _DEFAULT_WAIT(retry_state)
 
 
 class LLMClient:
@@ -56,9 +94,11 @@ class LLMClient:
     provider:
         Any object satisfying BaseLLMProvider protocol.
     timeout_seconds:
-        Hard timeout per call attempt. Defaults to DEFAULT_TIMEOUT_SECONDS.
+        Per-attempt hard timeout. Each retry gets a fresh budget.
+        Defaults to DEFAULT_TIMEOUT_SECONDS.
     max_retries:
-        Maximum retry attempts on rate-limit errors. Defaults to MAX_RETRIES.
+        Retries after the initial attempt. Total attempts = 1 + max_retries.
+        Defaults to MAX_RETRIES.
     """
 
     def __init__(
@@ -77,53 +117,45 @@ class LLMClient:
 
     async def call(self, request: LLMRequest) -> LLMResponse:
         """
-        Execute the LLM call with retry and timeout handling.
+        Execute the LLM call with retry and per-attempt timeout.
 
         Raises
         ------
-        LLMTimeoutError    if the call exceeds timeout_seconds
+        LLMTimeoutError    if every attempt exceeds timeout_seconds
         LLMRateLimitError  if rate-limit retries are exhausted
-        LLMProviderError   on non-retryable provider errors
-        LLMJsonParseError  if STRUCTURED_JSON output cannot be parsed
+        LLMTransientError  if transient retries are exhausted
+        LLMProviderError   on non-retryable provider errors (no retry)
+        LLMJsonParseError  if STRUCTURED_JSON output cannot be parsed (no retry)
         """
-        last_exc: LLMError | None = None
-        retried = False
+        total_attempts = 1 + self._max_retries
+        response: LLMResponse | None = None
+        final_attempt_number = 1
 
-        for attempt in range(self._max_retries + 1):
-            try:
-                response = await self._execute_with_timeout(request)
+        try:
+            async for attempt in AsyncRetrying(
+                stop=stop_after_attempt(total_attempts),
+                retry=retry_if_exception_type(LLMRetryableError),
+                wait=_wait_strategy,
+                before_sleep=self._make_before_sleep(request, total_attempts),
+                reraise=True,
+            ):
+                with attempt:
+                    response = await self._execute_with_timeout(request)
+                final_attempt_number = attempt.retry_state.attempt_number
+        except LLMRetryableError:
+            logger.error(
+                "llm_client.exhausted business_id=%s provider=%s model=%s attempts=%d",
+                request.business_id, self._provider.provider_name,
+                request.model, total_attempts,
+            )
+            raise
 
-                # Tag the response if we had to retry to get here
-                if retried:
-                    response.was_retried = True
-
-                self._log_usage(request, response)
-                return response
-
-            except LLMRateLimitError as exc:
-                last_exc = exc
-                if attempt >= self._max_retries:
-                    break
-                backoff = BACKOFF_BASE_SEC * (2 ** attempt)
-                logger.warning(
-                    "llm_client.rate_limit business_id=%s attempt=%d/%d "
-                    "backoff=%.1fs model=%s",
-                    request.business_id, attempt + 1, self._max_retries,
-                    backoff, request.model,
-                )
-                await asyncio.sleep(backoff)
-                retried = True
-
-            except LLMTimeoutError:
-                # Timeouts are not retried — surface immediately
-                logger.error(
-                    "llm_client.timeout business_id=%s model=%s timeout=%.1fs",
-                    request.business_id, request.model, self._timeout,
-                )
-                raise
-
-            # All other errors (LLMProviderError, LLMJsonParseError) propagate immediately
-        raise last_exc  # type: ignore[misc]
+        # AsyncRetrying with reraise=True guarantees response is set on success.
+        assert response is not None
+        if final_attempt_number > 1:
+            response.was_retried = True
+        self._log_usage(request, response)
+        return response
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -136,10 +168,30 @@ class LLMClient:
                 timeout=self._timeout,
             )
         except asyncio.TimeoutError as exc:
+            # Translate to a retryable type so tenacity sees it.
             raise LLMTimeoutError(
                 f"LLM call timed out after {self._timeout}s "
                 f"(model={request.model}, use_case={request.use_case})"
             ) from exc
+
+    def _make_before_sleep(self, request: LLMRequest, total_attempts: int):
+        """Build a tenacity before_sleep callback bound to this request's context."""
+        provider_name = self._provider.provider_name
+
+        def _before_sleep(retry_state) -> None:
+            outcome = retry_state.outcome
+            exc = outcome.exception() if outcome is not None else None
+            next_action = retry_state.next_action
+            sleep_s = next_action.sleep if next_action is not None else 0.0
+            logger.warning(
+                "llm_client.retry business_id=%s provider=%s model=%s "
+                "attempt=%d/%d exception=%s next_sleep=%.2fs",
+                request.business_id, provider_name, request.model,
+                retry_state.attempt_number, total_attempts,
+                type(exc).__name__ if exc else "None", sleep_s,
+            )
+
+        return _before_sleep
 
     def _log_usage(self, request: LLMRequest, response: LLMResponse) -> None:
         logger.info(
