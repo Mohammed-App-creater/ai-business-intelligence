@@ -1,0 +1,65 @@
+{
+  "run_utc": "2026-04-28T15:35:00.013109+00:00",
+  "base": "https://uat-ext-api-a3bre0gyhzaxhbau.eastus2-01.azurewebsites.net",
+  "biz": "40",
+  "foreign_biz": "128",
+  "from": "2025-10-01",
+  "to": "2026-03-31",
+  "summary": {
+    "total": 8,
+    "pass": 1,
+    "blocker": 5,
+    "workaround": 2,
+    "cosmetic": 0
+  },
+  "checks": [
+    {
+      "endpoint": "monthly-summary",
+      "check": "http_status",
+      "severity": "blocker",
+      "detail": "Expected 200, got 401. Body: ''"
+    },
+    {
+      "endpoint": "staff-breakdown",
+      "check": "http_status",
+      "severity": "blocker",
+      "detail": "Expected 200, got 401. Body: ''"
+    },
+    {
+      "endpoint": "service-breakdown",
+      "check": "http_status",
+      "severity": "blocker",
+      "detail": "Expected 200, got 401. Body: ''"
+    },
+    {
+      "endpoint": "staff-service-cross",
+      "check": "http_status",
+      "severity": "blocker",
+      "detail": "Expected 200, got 401. Body: ''"
+    },
+    {
+      "endpoint": "tenant_isolation",
+      "check": "tenant_isolation_403",
+      "severity": "workaround",
+      "detail": "Foreign business_id returned 401 (expected 403). Acceptable if backend conflates 'no auth' with 'wrong tenant', but flag for backend review."
+    },
+    {
+      "endpoint": "auth_failure",
+      "check": "auth_required",
+      "severity": "pass",
+      "detail": "Missing API key correctly rejected with 401."
+    },
+    {
+      "endpoint": "pagination",
+      "check": "pagination_basic",
+      "severity": "blocker",
+      "detail": "Pagination request failed: p1=401 p2=401."
+    },
+    {
+      "endpoint": "empty_window",
+      "check": "empty_response_shape",
+      "severity": "workaround",
+      "detail": "Cannot verify empty shape: status=401 on far-future request. Backend may reject 2099 dates. Verify manually with a known empty window."
+    }
+  ]
+}
