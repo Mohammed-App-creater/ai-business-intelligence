@@ -54,6 +54,30 @@ BUSINESS_ID    = "42"
 REQUEST_TIMEOUT = 30.0
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Period hints — answers often anchor with "April 2026" instead of "last month".
+# ─────────────────────────────────────────────────────────────────────────────
+
+_PERIOD_LAST_MONTH_ANSWER_HINTS: list[str] = [
+    "month",
+    "last month",
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "2025",
+    "2026",
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 29 Test questions — all from Step 1
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -64,7 +88,7 @@ QUESTIONS: dict[str, dict] = {
         "text":     "How many appointments did we have last month?",
         "category": "Volume & Counts",
         "expect_numbers": True,
-        "period_keywords": ["month", "last month"],
+        "period_keywords": list(_PERIOD_LAST_MONTH_ANSWER_HINTS),
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
     "Q2": {
@@ -85,7 +109,7 @@ QUESTIONS: dict[str, dict] = {
         "text":     "How many appointments did we have last month?",
         "category": "Volume & Counts",
         "expect_numbers": True,
-        "period_keywords": ["month", "last month"],
+        "period_keywords": list(_PERIOD_LAST_MONTH_ANSWER_HINTS),
         "must_not_contain": ["don't have", "no data", "unable to"],
     },
 
@@ -158,10 +182,15 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data"],
     },
     "Q14": {
-        "text":     "How many appointments did Maria Lopez complete last month?",
+        "text":     "How many appointments did Andrea Cubas complete last month?",
         "category": "Staff",
         "expect_numbers": True,
-        "period_keywords": ["maria", "lopez", "month", "complete"],
+        "period_keywords": [
+            "andrea",
+            "cubas",
+            "complete",
+            *_PERIOD_LAST_MONTH_ANSWER_HINTS,
+        ],
         "must_not_contain": ["don't have", "no data", "no staff"],
     },
     "Q15": {
@@ -202,10 +231,14 @@ QUESTIONS: dict[str, dict] = {
         "must_not_contain": ["don't have", "no data"],
     },
     "Q20": {
-        "text":     "How many appointments were booked for Facial Treatment last month?",
+        "text":     "How many appointments were booked for Hair Cut last month?",
         "category": "Services",
         "expect_numbers": True,
-        "period_keywords": ["facial", "treatment", "last month", "month"],
+        "period_keywords": [
+            "hair",
+            "cut",
+            *_PERIOD_LAST_MONTH_ANSWER_HINTS,
+        ],
         "must_not_contain": ["don't have", "no data"],
     },
     "Q21": {
