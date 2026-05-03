@@ -5,6 +5,12 @@
 -- warehouse_client, document generator, and downstream RAG/pgvector flows.
 -- No foreign keys between warehouse tables. Use UNIQUE constraints with
 -- ON CONFLICT ... DO UPDATE in ETL for idempotent upserts.
+--
+-- Cleanup history:
+--   2026-05-03: Dropped 9 pre-domain-refactor tables superseded by domain-
+--               prefixed replacements (wh_appt_*, wh_svc_*, wh_staff_*_monthly,
+--               wh_client_*, wh_mrk_*, wh_exp_*). Removed duplicated wh_svc_*
+--               block. Final count: 48 tables (47 domain + wh_etl_log).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
@@ -64,157 +70,6 @@ CREATE INDEX IF NOT EXISTS idx_wh_daily_revenue_business_id ON wh_daily_revenue 
 CREATE INDEX IF NOT EXISTS idx_wh_daily_revenue_business_revenue_date ON wh_daily_revenue (business_id, revenue_date);
 
 -- -----------------------------------------------------------------------------
--- wh_staff_performance — Monthly staff KPIs (visits, revenue, commission, ratings).
--- Source: tbl_visit, tbl_service_visit, tbl_emp_reviews, tbl_calendarevent, tbl_emp.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_staff_performance (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    employee_id INTEGER NOT NULL,
-    employee_name VARCHAR(150) NOT NULL DEFAULT '',
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    total_visits INTEGER NOT NULL DEFAULT 0,
-    total_revenue DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    total_tips DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    total_commission DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    appointments_booked INTEGER NOT NULL DEFAULT 0,
-    appointments_completed INTEGER NOT NULL DEFAULT 0,
-    appointments_cancelled INTEGER NOT NULL DEFAULT 0,
-    avg_rating DECIMAL(3, 2),
-    review_count INTEGER NOT NULL DEFAULT 0,
-    utilisation_rate DECIMAL(5, 2) NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_staff_performance_dim UNIQUE (business_id, employee_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_staff_performance_business_id ON wh_staff_performance (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_staff_performance_business_period ON wh_staff_performance (business_id, period_start);
-CREATE INDEX IF NOT EXISTS idx_wh_staff_performance_business_employee ON wh_staff_performance (business_id, employee_id);
-
--- -----------------------------------------------------------------------------
--- wh_service_performance — Monthly service KPIs (bookings, revenue, pricing spread).
--- Source: tbl_service_visit, tbl_visit, tbl_service.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_service_performance (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    service_id INTEGER NOT NULL,
-    service_name VARCHAR(200) NOT NULL DEFAULT '',
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    booking_count INTEGER NOT NULL DEFAULT 0,
-    revenue DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    avg_price DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    min_price DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    max_price DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    unique_customers INTEGER NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_service_performance_dim UNIQUE (business_id, service_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_service_performance_business_id ON wh_service_performance (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_service_performance_business_period ON wh_service_performance (business_id, period_start);
-
--- -----------------------------------------------------------------------------
--- wh_client_metrics — Per-customer lifetime / retention metrics.
--- Source: tbl_visit, tbl_custorg.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_client_metrics (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    customer_id INTEGER NOT NULL,
-    first_visit_date DATE,
-    last_visit_date DATE,
-    total_visits INTEGER NOT NULL DEFAULT 0,
-    total_spend DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    avg_spend_per_visit DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    loyalty_points INTEGER NOT NULL DEFAULT 0,
-    days_since_last_visit INTEGER,
-    visit_frequency_days DECIMAL(8, 2),
-    is_churned BOOLEAN NOT NULL DEFAULT FALSE,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_client_metrics_dim UNIQUE (business_id, customer_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_client_metrics_business_id ON wh_client_metrics (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_client_metrics_business_last_visit ON wh_client_metrics (business_id, last_visit_date);
-CREATE INDEX IF NOT EXISTS idx_wh_client_metrics_business_churned ON wh_client_metrics (business_id, is_churned);
-
--- -----------------------------------------------------------------------------
--- wh_appointment_metrics — Monthly appointment funnel and sign-in sourced counts.
--- Source: tbl_calendarevent, tbl_custsignin.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_appointment_metrics (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    location_id INTEGER NOT NULL DEFAULT 0,
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    total_booked INTEGER NOT NULL DEFAULT 0,
-    confirmed_count INTEGER NOT NULL DEFAULT 0,
-    completed_count INTEGER NOT NULL DEFAULT 0,
-    cancelled_count INTEGER NOT NULL DEFAULT 0,
-    no_show_count INTEGER NOT NULL DEFAULT 0,
-    walkin_count INTEGER NOT NULL DEFAULT 0,
-    app_booking_count INTEGER NOT NULL DEFAULT 0,
-    cancellation_rate DECIMAL(5, 2) NOT NULL DEFAULT 0,
-    completion_rate DECIMAL(5, 2) NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_appointment_metrics_dim UNIQUE (business_id, location_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_appointment_metrics_business_id ON wh_appointment_metrics (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_appointment_metrics_business_period ON wh_appointment_metrics (business_id, period_start);
-
--- -----------------------------------------------------------------------------
--- wh_expense_summary — Monthly expenses by category (P&L / cost analysis).
--- Source: tbl_expense, tbl_expense_category, tbl_expense_subcategory.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_expense_summary (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    location_id INTEGER NOT NULL DEFAULT 0,
-    category_id INTEGER NOT NULL DEFAULT 0,
-    category_name VARCHAR(150) NOT NULL DEFAULT '',
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    total_amount DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    expense_count INTEGER NOT NULL DEFAULT 0,
-    avg_expense DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_expense_summary_dim UNIQUE (business_id, location_id, category_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_expense_summary_business_id ON wh_expense_summary (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_expense_summary_business_period ON wh_expense_summary (business_id, period_start);
-
--- -----------------------------------------------------------------------------
--- wh_review_summary — Monthly ratings from employee, visit, and Google reviews.
--- Source: tbl_emp_reviews, tbl_visit_review, tbl_google_review (via org linkage in ETL).
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_review_summary (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    emp_review_count INTEGER NOT NULL DEFAULT 0,
-    emp_avg_rating DECIMAL(3, 2),
-    visit_review_count INTEGER NOT NULL DEFAULT 0,
-    visit_avg_rating DECIMAL(3, 2),
-    google_review_count INTEGER NOT NULL DEFAULT 0,
-    google_avg_rating DECIMAL(3, 2),
-    google_bad_review_count INTEGER NOT NULL DEFAULT 0,
-    total_review_count INTEGER NOT NULL DEFAULT 0,
-    overall_avg_rating DECIMAL(3, 2),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_review_summary_dim UNIQUE (business_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_review_summary_business_id ON wh_review_summary (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_review_summary_business_period ON wh_review_summary (business_id, period_start);
-
--- -----------------------------------------------------------------------------
 -- wh_payment_breakdown — Monthly totals by payment method (cash, card, GC, other).
 -- Source: tbl_visit.
 -- -----------------------------------------------------------------------------
@@ -240,77 +95,6 @@ CREATE TABLE IF NOT EXISTS wh_payment_breakdown (
 
 CREATE INDEX IF NOT EXISTS idx_wh_payment_breakdown_business_id ON wh_payment_breakdown (business_id);
 CREATE INDEX IF NOT EXISTS idx_wh_payment_breakdown_business_period ON wh_payment_breakdown (business_id, period_start);
-
--- -----------------------------------------------------------------------------
--- wh_campaign_performance — Per-campaign execution metrics (email / marketing sends).
--- Source: tbl_mrkcampaign, tbl_executecampaign.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_campaign_performance (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    campaign_id INTEGER NOT NULL,
-    campaign_name VARCHAR(200) NOT NULL DEFAULT '',
-    execution_date DATE NOT NULL,
-    is_recurring BOOLEAN NOT NULL DEFAULT FALSE,
-    total_sent INTEGER NOT NULL DEFAULT 0,
-    successful_sent INTEGER NOT NULL DEFAULT 0,
-    failed_count INTEGER NOT NULL DEFAULT 0,
-    opened_count INTEGER NOT NULL DEFAULT 0,
-    clicked_count INTEGER NOT NULL DEFAULT 0,
-    open_rate DECIMAL(5, 2) NOT NULL DEFAULT 0,
-    click_rate DECIMAL(5, 2) NOT NULL DEFAULT 0,
-    fail_rate DECIMAL(5, 2) NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_campaign_performance_dim UNIQUE (business_id, campaign_id, execution_date)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_campaign_performance_business_id ON wh_campaign_performance (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_campaign_performance_business_execution ON wh_campaign_performance (business_id, execution_date);
-
--- -----------------------------------------------------------------------------
--- wh_attendance_summary — Monthly staff attendance (days worked, hours from parsed times).
--- Source: tbl_attendance, tbl_emp.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_attendance_summary (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    employee_id INTEGER NOT NULL,
-    employee_name VARCHAR(150) NOT NULL DEFAULT '',
-    location_id INTEGER NOT NULL DEFAULT 0,
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    days_worked INTEGER NOT NULL DEFAULT 0,
-    total_hours_worked DECIMAL(8, 2) NOT NULL DEFAULT 0,
-    avg_hours_per_day DECIMAL(6, 2) NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_attendance_summary_dim UNIQUE (business_id, employee_id, location_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_attendance_summary_business_id ON wh_attendance_summary (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_attendance_summary_business_period ON wh_attendance_summary (business_id, period_start);
-
--- -----------------------------------------------------------------------------
--- wh_subscription_revenue — Monthly subscription / MRR style aggregates.
--- Source: tbl_custsubscription.
--- -----------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS wh_subscription_revenue (
-    id BIGSERIAL PRIMARY KEY,
-    business_id INTEGER NOT NULL,
-    location_id INTEGER NOT NULL DEFAULT 0,
-    period_start DATE NOT NULL,
-    period_end DATE NOT NULL,
-    active_subscriptions INTEGER NOT NULL DEFAULT 0,
-    new_subscriptions INTEGER NOT NULL DEFAULT 0,
-    cancelled_subscriptions INTEGER NOT NULL DEFAULT 0,
-    gross_subscription_revenue DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    net_subscription_revenue DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    avg_subscription_value DECIMAL(15, 2) NOT NULL DEFAULT 0,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_wh_subscription_revenue_dim UNIQUE (business_id, location_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_wh_subscription_revenue_business_id ON wh_subscription_revenue (business_id);
-CREATE INDEX IF NOT EXISTS idx_wh_subscription_revenue_business_period ON wh_subscription_revenue (business_id, period_start);
 
 -- -----------------------------------------------------------------------------
 -- wh_etl_log — ETL run history (monitoring, debugging, row counts).
@@ -339,19 +123,18 @@ CREATE INDEX IF NOT EXISTS idx_wh_etl_log_status_started ON wh_etl_log (status, 
 
 
 -- =============================================================================
--- APPEND TO: warehouse_schema.sql
+-- APPOINTMENTS DOMAIN — Sprint 2
 -- =============================================================================
--- Appointments domain warehouse tables.
--- Add these after wh_appointment_metrics (the existing basic funnel table).
--- These 4 tables replace wh_appointment_metrics for RAG purposes —
--- they carry the full field set needed by the appointments doc generator.
+-- 4 tables covering monthly funnel, staff breakdown, service breakdown,
+-- and the staff×service cross.
+-- (Pre-refactor wh_appointment_metrics was dropped in the 2026-05-03 cleanup.)
 -- =============================================================================
 
 
 -- -----------------------------------------------------------------------------
 -- wh_appt_monthly_summary
 -- Monthly appointment funnel per location + org rollup (location_id = 0).
--- Extends wh_appointment_metrics with time slots, duration, MoM, rollup flag.
+-- Includes time slots, duration, MoM growth, and rollup flag.
 -- Source: analytics backend /api/v1/leo/appointments/monthly-summary
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS wh_appt_monthly_summary (
@@ -494,24 +277,15 @@ CREATE INDEX IF NOT EXISTS idx_wh_appt_staff_service_cross_service
 
 
 
-
 -- =============================================================================
--- APPEND TO: warehouse_schema.sql
+-- STAFF PERFORMANCE DOMAIN — Sprint 3
 -- =============================================================================
--- Staff Performance domain warehouse tables.
--- Add these after the existing wh_staff_performance table.
---
--- WHY NEW TABLES INSTEAD OF ALTERING wh_staff_performance:
---   wh_staff_performance has UNIQUE(business_id, employee_id, period_start).
---   Our Q1 grain is per (staff × location × period) — a staff member working
---   at two locations in the same month needs two rows. That would violate the
---   existing constraint. Same pattern as wh_appointment_metrics → wh_appt_*:
---   leave the existing table for backwards compat, add new tables alongside.
---
--- NEW TABLES:
---   wh_staff_performance_monthly  — Q1: KPIs per staff × location × period
---   wh_staff_summary              — Q2: all-time totals per staff
---   wh_staff_attendance           — Q4: hours worked per staff × location × period
+-- 3 tables:
+--   wh_staff_performance_monthly  — KPIs per staff × location × period
+--   wh_staff_summary              — all-time totals per staff
+--   wh_staff_attendance           — hours worked per staff × location × period
+-- (Pre-refactor wh_staff_performance and wh_attendance_summary were dropped
+--  in the 2026-05-03 cleanup.)
 -- =============================================================================
 
 
@@ -711,9 +485,10 @@ CREATE INDEX IF NOT EXISTS idx_wh_staff_attendance_hours_rank
 
 
 -- =============================================================================
--- Services Domain — Warehouse Tables
--- Append to infra/init_db.sql
--- 5 tables matching the 5 API endpoints / query sets
+-- SERVICES DOMAIN — Sprint 4
+-- =============================================================================
+-- 5 tables matching the 5 API endpoints / query sets.
+-- (Pre-refactor wh_service_performance was dropped in the 2026-05-03 cleanup.)
 -- =============================================================================
 
 -- EP1: Service Monthly Summary (performed/paid side)
@@ -838,136 +613,12 @@ CREATE INDEX IF NOT EXISTS idx_svc_catalog_biz
     ON wh_svc_catalog (business_id);
 
 
--- =============================================================================
--- Services Domain — Warehouse Tables
--- Append to infra/init_db.sql
--- 5 tables matching the 5 API endpoints / query sets
--- =============================================================================
-
--- EP1: Service Monthly Summary (performed/paid side)
-CREATE TABLE IF NOT EXISTS wh_svc_monthly_summary (
-    id                          SERIAL PRIMARY KEY,
-    business_id                 INTEGER NOT NULL,
-    service_id                  INTEGER NOT NULL,
-    service_name                TEXT NOT NULL,
-    category_name               TEXT,
-    location_id                 INTEGER NOT NULL,
-    location_name               TEXT NOT NULL,
-    period_start                DATE NOT NULL,
-    performed_count             INTEGER NOT NULL DEFAULT 0,
-    distinct_clients            INTEGER NOT NULL DEFAULT 0,
-    repeat_visit_proxy          INTEGER NOT NULL DEFAULT 0,
-    total_revenue               NUMERIC(12,2) NOT NULL DEFAULT 0,
-    avg_charged_price           NUMERIC(10,2) NOT NULL DEFAULT 0,
-    total_emp_commission        NUMERIC(12,2) NOT NULL DEFAULT 0,
-    gross_margin                NUMERIC(12,2) NOT NULL DEFAULT 0,
-    commission_pct_of_revenue   NUMERIC(5,1),
-    mom_revenue_growth_pct      NUMERIC(6,1),
-    revenue_rank                INTEGER,
-    margin_rank                 INTEGER,
-    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_svc_monthly UNIQUE (business_id, service_id, location_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_svc_monthly_biz_period
-    ON wh_svc_monthly_summary (business_id, period_start);
-
--- EP2: Service Booking Stats (booking side)
-CREATE TABLE IF NOT EXISTS wh_svc_booking_stats (
-    id                          SERIAL PRIMARY KEY,
-    business_id                 INTEGER NOT NULL,
-    service_id                  INTEGER NOT NULL,
-    service_name                TEXT NOT NULL,
-    location_id                 INTEGER NOT NULL,
-    location_name               TEXT NOT NULL,
-    period_start                DATE NOT NULL,
-    total_booked                INTEGER NOT NULL DEFAULT 0,
-    completed_count             INTEGER NOT NULL DEFAULT 0,
-    cancelled_count             INTEGER NOT NULL DEFAULT 0,
-    no_show_count               INTEGER NOT NULL DEFAULT 0,
-    cancellation_rate_pct       NUMERIC(5,1),
-    avg_actual_duration_min     NUMERIC(6,1),
-    distinct_clients            INTEGER NOT NULL DEFAULT 0,
-    morning_bookings            INTEGER NOT NULL DEFAULT 0,
-    afternoon_bookings          INTEGER NOT NULL DEFAULT 0,
-    evening_bookings            INTEGER NOT NULL DEFAULT 0,
-    mom_bookings_growth_pct     NUMERIC(6,1),
-    created_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_svc_booking UNIQUE (business_id, service_id, location_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_svc_booking_biz_period
-    ON wh_svc_booking_stats (business_id, period_start);
-
--- EP3: Service × Staff Matrix
-CREATE TABLE IF NOT EXISTS wh_svc_staff_matrix (
-    id                  SERIAL PRIMARY KEY,
-    business_id         INTEGER NOT NULL,
-    service_id          INTEGER NOT NULL,
-    service_name        TEXT NOT NULL,
-    staff_id            INTEGER NOT NULL,
-    staff_name          TEXT NOT NULL,
-    period_start        DATE NOT NULL,
-    performed_count     INTEGER NOT NULL DEFAULT 0,
-    revenue             NUMERIC(12,2) NOT NULL DEFAULT 0,
-    commission_paid     NUMERIC(12,2) NOT NULL DEFAULT 0,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_svc_staff UNIQUE (business_id, service_id, staff_id, period_start)
-);
-
-CREATE INDEX IF NOT EXISTS idx_svc_staff_biz_period
-    ON wh_svc_staff_matrix (business_id, period_start);
-
--- EP4: Service Co-occurrence
-CREATE TABLE IF NOT EXISTS wh_svc_co_occurrence (
-    id                      SERIAL PRIMARY KEY,
-    business_id             INTEGER NOT NULL,
-    period_start            DATE NOT NULL,
-    service_a_id            INTEGER NOT NULL,
-    service_a_name          TEXT NOT NULL,
-    service_b_id            INTEGER NOT NULL,
-    service_b_name          TEXT NOT NULL,
-    co_occurrence_count     INTEGER NOT NULL DEFAULT 0,
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_svc_cooccur UNIQUE (business_id, service_a_id, service_b_id, period_start)
-);
-
--- EP5: Service Catalog Snapshot
-CREATE TABLE IF NOT EXISTS wh_svc_catalog (
-    id                              SERIAL PRIMARY KEY,
-    business_id                     INTEGER NOT NULL,
-    service_id                      INTEGER NOT NULL,
-    service_name                    TEXT NOT NULL,
-    category_name                   TEXT,
-    list_price                      NUMERIC(10,2) NOT NULL DEFAULT 0,
-    default_commission_rate         NUMERIC(5,2),
-    commission_type                 VARCHAR(1) NOT NULL DEFAULT '%',
-    scheduled_duration_min          INTEGER NOT NULL DEFAULT 0,
-    is_active                       BOOLEAN NOT NULL DEFAULT true,
-    created_at                      TIMESTAMPTZ,
-    home_location_id                INTEGER,
-    last_sold_date                  TIMESTAMPTZ,
-    days_since_last_sale            INTEGER,
-    lifetime_performed_count        INTEGER NOT NULL DEFAULT 0,
-    new_client_first_service_count  INTEGER NOT NULL DEFAULT 0,
-    dormant_flag                    BOOLEAN NOT NULL DEFAULT false,
-    is_new_this_year                BOOLEAN NOT NULL DEFAULT false,
-    avg_discount_pct                NUMERIC(5,1),
-    scheduled_vs_actual_delta_min   NUMERIC(5,1),
-    refreshed_at                    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT uq_svc_catalog UNIQUE (business_id, service_id)
-);
-
-CREATE INDEX IF NOT EXISTS idx_svc_catalog_biz
-    ON wh_svc_catalog (business_id);
 
 -- =============================================================================
--- Clients domain warehouse tables.
+-- CLIENTS DOMAIN — Sprint 5
+-- =============================================================================
 -- 3 tables support the 23 acceptance questions from the Clients sprint.
+-- (Pre-refactor wh_client_metrics was dropped in the 2026-05-03 cleanup.)
 --
 -- Key design decisions (from Step 2 + Step 3 specs):
 --   1. wh_client_retention is HISTORICAL (PK includes period) — required for
@@ -1121,40 +772,15 @@ CREATE INDEX IF NOT EXISTS idx_wh_client_per_loc_biz
     ON wh_client_per_location_monthly (business_id, period DESC);
 
 
--- ─────────────────────────────────────────────────────────────────────────────
--- Verification query — run after ETL to confirm population
--- ─────────────────────────────────────────────────────────────────────────────
---
--- SELECT
---     'wh_client_retention'              AS table_name,
---     COUNT(*)                           AS rows
--- FROM wh_client_retention WHERE business_id = 42
--- UNION ALL
--- SELECT 'wh_client_cohort_monthly',     COUNT(*)
--- FROM wh_client_cohort_monthly WHERE business_id = 42
--- UNION ALL
--- SELECT 'wh_client_per_location_monthly', COUNT(*)
--- FROM wh_client_per_location_monthly WHERE business_id = 42;
---
--- Expected after initial ETL run for biz 42 (based on fixtures):
---              table_name             | rows
--- ------------------------------------+------
---  wh_client_retention                |   38
---  wh_client_cohort_monthly           |    3
---  wh_client_per_location_monthly     |    2
-
 
 -- =============================================================================
 -- MARKETING DOMAIN — Sprint 6
 -- =============================================================================
---
--- Tables map 1:1 to the Step 2 query specs:
+-- 3 tables map 1:1 to the Step 2 query specs:
 --   QS1 → wh_mrk_campaign_summary
 --   QS2 → wh_mrk_channel_monthly
 --   QS3 → wh_mrk_promo_attribution_monthly
---
--- Naming convention matches prior domains (wh_appt_*, wh_svc_*, wh_client_*).
--- Primary keys + indexes follow the same (business_id, period) pattern.
+-- (Pre-refactor wh_campaign_performance was dropped in the 2026-05-03 cleanup.)
 -- =============================================================================
 
 
@@ -1306,21 +932,12 @@ CREATE INDEX IF NOT EXISTS idx_wh_mrk_pa_bp
 CREATE INDEX IF NOT EXISTS idx_wh_mrk_pa_bl
     ON wh_mrk_promo_attribution_monthly (business_id, period, location_id);
 
--- End of Marketing Domain warehouse schema additions.
 
 
 -- =============================================================================
--- APPEND TO: infra/warehouse_schema.sql
+-- EXPENSES DOMAIN — Sprint 7
 -- =============================================================================
--- Expenses domain warehouse tables (7 total).
---
--- Paste this block at the end of warehouse_schema.sql, AFTER the marketing
--- tables (wh_mrk_*) and BEFORE any trailing wh_etl_log / wh_embedding_log
--- tables. Order matters only for readability — there are no cross-table
--- FKs here, each table is self-contained on (business_id, period, ...).
---
--- Sprint: Domain 7 of 11 (Expenses)
--- Step: 4 of 8 (ETL wire-up)
+-- 7 tables. (Pre-refactor wh_expense_summary was dropped in the 2026-05-03 cleanup.)
 -- Matches: etl/transforms/expenses_etl.py upserts
 -- Source of truth: Step 2 query spec v2 + Step 3 API spec v2
 -- =============================================================================
@@ -1540,44 +1157,19 @@ CREATE INDEX IF NOT EXISTS idx_wh_exp_cat_loc_cross_business
     ON wh_exp_category_location_cross (business_id, period DESC, location_id);
 
 
--- =============================================================================
--- END EXPENSES DOMAIN TABLES
--- =============================================================================
--- Verification query after deployment (7 tables, 0 rows initially):
---
---   SELECT table_name,
---          (SELECT count(*) FROM information_schema.columns
---           WHERE table_name = t.table_name) AS columns
---   FROM information_schema.tables t
---   WHERE table_name LIKE 'wh_exp_%'
---   ORDER BY table_name;
---
--- Expected result:
---   wh_exp_category_breakdown          | 15
---   wh_exp_category_location_cross     | 11
---   wh_exp_location_breakdown          | 12
---   wh_exp_monthly_summary             | 21
---   wh_exp_payment_type_breakdown      |  9
---   wh_exp_staff_attribution           |  8
---   wh_exp_subcategory_breakdown       | 10
--- =============================================================================
 
-
--- ═══════════════════════════════════════════════════════════════════════════════
--- Migration: 2026_04_22_promos_warehouse.sql
--- Domain:    Promos (Domain 8)
--- Purpose:   Warehouse tables to land promo redemption data extracted from
---            the analytics backend. Read by doc_generator.promos.py to
---            produce 6 chunk types for embedding into pgvector.
--- ═══════════════════════════════════════════════════════════════════════════════
+-- =============================================================================
+-- PROMOS DOMAIN — Sprint 8
+-- =============================================================================
+-- 5 tables for promo redemption analytics, read by doc_generator.promos.py.
 --
--- Conventions inherited from prior domain migrations:
+-- Conventions:
 --   • business_id column on every table (tenant isolation enforced at write+read)
 --   • period_start as DATE column, NULLABLE for catalog-style rows (Lesson 3)
 --   • All currency as NUMERIC(20, 2) — matches API spec types
 --   • Composite indexes on (business_id, period_start) for query performance
 --   • generated_at TIMESTAMP for staleness checks
--- ═══════════════════════════════════════════════════════════════════════════════
+-- =============================================================================
 
 
 -- ── 1. wh_promo_monthly ───────────────────────────────────────────────────────
@@ -1716,22 +1308,10 @@ CREATE INDEX IF NOT EXISTS idx_wh_promo_catalog_health_biz
     ON wh_promo_catalog_health (business_id);
 
 
--- ── Sanity: rollback notes ───────────────────────────────────────────────────
--- To rollback this migration:
---   DROP TABLE IF EXISTS wh_promo_catalog_health;
---   DROP TABLE IF EXISTS wh_promo_location_codes;
---   DROP TABLE IF EXISTS wh_promo_locations;
---   DROP TABLE IF EXISTS wh_promo_codes;
---   DROP TABLE IF EXISTS wh_promo_monthly;
-
-
-
 
 -- =============================================================================
--- LEO AI BI — Gift Cards Warehouse Tables  (Domain 9, Sprint 9)
--- File: migrations/2026_04_25_giftcards_warehouse.sql
+-- GIFT CARDS DOMAIN — Sprint 9
 -- =============================================================================
---
 -- 8 tables, one per analytics endpoint (EP1–EP8 from API spec v1.0).
 -- All upserts use INSERT ... ON CONFLICT DO UPDATE inside a transaction
 -- (idempotent — Lesson 17 from prior sprints).
@@ -1955,30 +1535,13 @@ CREATE INDEX IF NOT EXISTS idx_wh_giftcard_health_biz_date
     ON wh_giftcard_health_snapshot (business_id, snapshot_date DESC);
 
 
--- ── Sanity: rollback notes ───────────────────────────────────────────────────
--- To rollback this migration:
---   DROP TABLE IF EXISTS wh_giftcard_health_snapshot;
---   DROP TABLE IF EXISTS wh_giftcard_denomination_snapshot;
---   DROP TABLE IF EXISTS wh_giftcard_anomalies_snapshot;
---   DROP TABLE IF EXISTS wh_giftcard_aging_snapshot;
---   DROP TABLE IF EXISTS wh_giftcard_by_location;
---   DROP TABLE IF EXISTS wh_giftcard_by_staff;
---   DROP TABLE IF EXISTS wh_giftcard_liability_snapshot;
---   DROP TABLE IF EXISTS wh_giftcard_monthly;
 
-
-
-
-
--- migrations/2026_04_26_forms_warehouse.sql
--- ============================================================================
--- LEO AI BI · Sprint 10 · Forms Domain · Warehouse DDL v1.0
--- ============================================================================
+-- =============================================================================
+-- FORMS DOMAIN — Sprint 10
+-- =============================================================================
 -- 4 tables, all composite-PK on (business_id, snapshot_date) or
 -- (business_id, period_start). All idempotent via INSERT ... ON CONFLICT.
---
--- Apply against the WAREHOUSE database (port 5433 / LeoWearhouseDB).
--- ============================================================================
+-- =============================================================================
 
 -- ─────────────────────────────────────────────────────────────────────────────
 -- FQ1 · Catalog snapshot — 1 row per (biz, snapshot_date)
@@ -2093,22 +1656,17 @@ CREATE INDEX IF NOT EXISTS idx_wh_form_lifecycle_biz
     ON wh_form_lifecycle_snapshot (business_id);
 
 
--- ============================================================================
--- End of DDL — 4 tables, 5 indexes
--- ============================================================================
 
-
-
--- ============================================================================
---  Memberships Domain — Warehouse Tables
---  Step 4: ETL Wire-Up
--- ============================================================================
---  Two tables, mirroring the two API endpoints:
---    wh_membership_units    (Set A — unit grain)
---    wh_membership_monthly  (Set B — location-month grain)
+-- =============================================================================
+-- MEMBERSHIPS DOMAIN — Sprint 11
+-- =============================================================================
+-- 2 tables mirroring the two API endpoints:
+--   wh_membership_units    (Set A — unit grain)
+--   wh_membership_monthly  (Set B — location-month grain)
 --
---  Both keyed on business_id for tenant isolation.
--- ============================================================================
+-- Both keyed on business_id for tenant isolation.
+-- (Pre-refactor wh_subscription_revenue was dropped in the 2026-05-03 cleanup.)
+-- =============================================================================
 
 
 -- ─── Set A: Unit-grain memberships snapshot ─────────────────────────────────
@@ -2208,3 +1766,20 @@ CREATE TABLE IF NOT EXISTS wh_membership_monthly (
 
 CREATE INDEX IF NOT EXISTS idx_wh_mem_monthly_biz_month
     ON wh_membership_monthly (business_id, month_start);
+
+
+-- =============================================================================
+-- End of warehouse_schema.sql — 48 tables total
+--   Revenue: wh_monthly_revenue, wh_daily_revenue, wh_payment_breakdown        (3)
+--   Appointments: wh_appt_*                                                    (4)
+--   Staff: wh_staff_performance_monthly, wh_staff_summary, wh_staff_attendance (3)
+--   Services: wh_svc_*                                                         (5)
+--   Clients: wh_client_*                                                       (3)
+--   Marketing: wh_mrk_*                                                        (3)
+--   Expenses: wh_exp_*                                                         (7)
+--   Promos: wh_promo_*                                                         (5)
+--   Gift Cards: wh_giftcard_*                                                  (8)
+--   Forms: wh_form_*                                                           (4)
+--   Memberships: wh_membership_*                                               (2)
+--   Meta: wh_etl_log                                                           (1)
+-- =============================================================================
