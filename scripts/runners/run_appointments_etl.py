@@ -4,7 +4,7 @@ scripts/runners/run_appointments_etl.py
 Verification runner for the Appointments domain ETL.
 
 Pulls all 4 appointment slices from the analytics backend
-(or mock server), runs them through AppointmentsExtractor,
+(or mock server), runs them through ``AppointmentsExtractor`` from ``etl.transforms.appointments_etl``,
 and verifies the output before it hits pgvector.
 
 Usage (against mock server):
@@ -34,9 +34,14 @@ from dateutil.relativedelta import relativedelta
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from app.services.analytics_client import AnalyticsClient
-from etl.transforms.appointments_etl import AppointmentsExtractor
+from etl.transforms.appointments_etl import AppointmentsExtractor  # analytics API (v2), not etl.extractors
 
-ANALYTICS_BASE_URL = os.getenv("ANALYTICS_BACKEND_URL", "http://localhost:8001")
+ANALYTICS_BASE_URL = os.getenv("ANALYTICS_BACKEND_URL")
+if not ANALYTICS_BASE_URL:
+    raise SystemExit(
+        "ANALYTICS_BACKEND_URL is not set. Set it in .env or export it. "
+        "For UAT use: https://uat-ext-api-a3bre0gyhzaxhbau.eastus2-01.azurewebsites.net"
+    )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Verification helpers

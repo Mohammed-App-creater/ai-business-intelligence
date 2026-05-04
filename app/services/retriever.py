@@ -316,6 +316,9 @@ class Retriever:
                 _top_k = 12
             elif domains[0] == "services":
                 _top_k = 10
+            elif domains[0] == "appointments":
+                # Phase 2.3: bumped to allow cross-location comparison questions.
+                _top_k = 10
             elif domains[0] == "expenses":
                 # Expenses has 9 doc types and 121 chunks per tenant —
                 # multi-month / multi-location / multi-payment questions

@@ -285,6 +285,7 @@ class AnalyticsClient:
         end_date: date,
         location_id: Optional[int] = None,
         group_by: str = "month",
+        limit: Optional[int] = None,
     ) -> list[dict]:
         """
         Monthly appointment KPIs per location + org rollup.
@@ -310,11 +311,13 @@ class AnalyticsClient:
             total_no_shows, avg_cancellation_rate_pct,
             best_period, worst_period, trend_slope
         """
+        lim = settings.APPOINTMENTS_PAGE_SIZE if limit is None else limit
         payload = {
             "business_id": business_id,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "group_by": group_by,
+            "limit": lim,
         }
         if location_id is not None:
             payload["location_id"] = location_id
@@ -330,7 +333,7 @@ class AnalyticsClient:
         end_date: date,
         staff_id: Optional[int] = None,
         location_id: Optional[int] = None,
-        limit: int = 50,
+        limit: Optional[int] = None,
     ) -> list[dict]:
         """
         Per-staff monthly appointment statistics.
@@ -347,19 +350,21 @@ class AnalyticsClient:
             no_show_count, no_show_rate_pct,
             distinct_services_handled, mom_growth_pct
         """
+        lim = settings.APPOINTMENTS_PAGE_SIZE if limit is None else limit
         payload = {
             "business_id": business_id,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
-            "limit": limit,
+            "limit": lim,
         }
         if staff_id is not None:
             payload["staff_id"] = staff_id
         if location_id is not None:
             payload["location_id"] = location_id
 
+        # Real backend path; verified Apr 28-30 / smoke test §3.6 catches regression.
         return await self._post(
-            "/api/v1/leo/appointments/by-staff", payload
+            "/api/v1/leo/appointments/staff-breakdown", payload
         )
 
     async def get_appointments_by_service(
@@ -369,6 +374,7 @@ class AnalyticsClient:
         end_date: date,
         service_id: Optional[int] = None,
         group_by: str = "month",
+        limit: Optional[int] = None,
     ) -> list[dict]:
         """
         Per-service monthly appointment statistics.
@@ -387,17 +393,20 @@ class AnalyticsClient:
             cancellation_rate_pct,
             morning_count, afternoon_count, evening_count
         """
+        lim = settings.APPOINTMENTS_PAGE_SIZE if limit is None else limit
         payload = {
             "business_id": business_id,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "group_by": group_by,
+            "limit": lim,
         }
         if service_id is not None:
             payload["service_id"] = service_id
 
+        # Real backend path; verified Apr 28-30 / smoke test §3.6 catches regression.
         return await self._post(
-            "/api/v1/leo/appointments/by-service", payload
+            "/api/v1/leo/appointments/service-breakdown", payload
         )
 
     async def get_appointments_staff_service_cross(
@@ -407,6 +416,7 @@ class AnalyticsClient:
         end_date: date,
         staff_id: Optional[int] = None,
         service_id: Optional[int] = None,
+        limit: Optional[int] = None,
     ) -> list[dict]:
         """
         Staff × Service cross-dimensional breakdown.
@@ -423,10 +433,12 @@ class AnalyticsClient:
             period,
             total_booked, completed_count
         """
+        lim = settings.APPOINTMENTS_PAGE_SIZE if limit is None else limit
         payload = {
             "business_id": business_id,
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
+            "limit": lim,
         }
         if staff_id is not None:
             payload["staff_id"] = staff_id

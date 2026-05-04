@@ -130,20 +130,25 @@ def _chunk_monthly_summary(row: dict) -> str:
     else:
         source_str = ""
 
-    # Q18: completed per staff — hardcoded staff counts per location
-    # Main St: 2 staff (Maria Lopez, James Carter)
-    # Westside: 1 staff (Aisha Nwosu) — Tom Rivera left after Jun 2025
-    # Rollup: 3 total active staff
-    _staff_counts = {"Main St": 2, "Westside": 1}
-    _num_staff = _staff_counts.get(loc_name, 3) if not is_rollup else 3
-    _completed_per_staff = round(completed / _num_staff, 1) if _num_staff > 0 else 0
-    completed_per_staff_str = (
-        f"Completed appointments per staff member at {loc_name}: {_completed_per_staff} "
-        f"({completed} completed ÷ {_num_staff} staff)."
-        if not is_rollup
-        else f"Completed appointments per staff member (org-wide): {_completed_per_staff} "
-             f"({completed} completed ÷ {_num_staff} active staff)."
-    )
+    # Q18: completed per staff — distinct staff count from staff-breakdown (ETL: distinct_staff_count)
+    n_staff = int(row.get("distinct_staff_count") or 0)
+    if n_staff > 0:
+        _completed_per_staff = round(completed / n_staff, 2)
+        completed_per_staff_str = (
+            f"Completed appointments per staff member at {loc_name}: {_completed_per_staff} "
+            f"({completed} completed ÷ {n_staff} staff)."
+            if not is_rollup
+            else f"Completed appointments per staff member (org-wide): {_completed_per_staff} "
+                 f"({completed} completed ÷ {n_staff} active staff)."
+        )
+    else:
+        completed_per_staff_str = (
+            f"Completed appointments per staff member at {loc_name}: not computable "
+            f"(no staff-breakdown rows for this location and period); completed: {completed}."
+            if not is_rollup
+            else f"Completed appointments per staff member (org-wide): not computable "
+                 f"(no staff-breakdown rows for this period); completed: {completed}."
+        )
 
     return (
         f"Appointment Summary — {loc_label} — {period}\n"
@@ -355,7 +360,8 @@ async def generate_appointments_docs(
     org_id:
         The tenant / business ID.
     warehouse_rows:
-        Documents produced by AppointmentsExtractor.run() and stored in
+        Documents produced by ``etl.transforms.appointments_etl.AppointmentsExtractor.run()``
+        and stored in
         the analytics warehouse. Each row must have a ``doc_type`` field.
     embedding_client:
         EmbeddingClient instance — used to embed chunk_text.

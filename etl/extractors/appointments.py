@@ -1,4 +1,13 @@
-"""Appointment metrics extractor — calendar + custsignin."""
+"""
+Legacy MySQL appointment metrics extractor (tbl_calendarevent + tbl_custsignin).
+
+.. warning::
+    **Not** the analytics-backend / warehouse RAG pipeline. For that, use
+    :class:`etl.transforms.appointments_etl.AppointmentsExtractor` (same short
+    name, different module — import from ``etl.transforms.appointments_etl``).
+
+This class feeds historical ``wh_appointment_metrics`` / loader transforms only.
+"""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -69,7 +78,9 @@ def _loc_key(row: dict) -> tuple:
     return (row["business_id"], row["location_id"], row["period_start"])
 
 
-class AppointmentsExtractor(BaseExtractor):
+class LegacyMysqlAppointmentMetricsExtractor(BaseExtractor):
+    """MySQL-only calendar/sign-in rollup; deprecated path name was ``AppointmentsExtractor``."""
+
     async def extract(self, org_id: int, period_start: date, period_end: date) -> list[dict]:
         end_excl = period_end_exclusive(period_end)
         params = (org_id, period_start, end_excl)

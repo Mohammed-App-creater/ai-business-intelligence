@@ -30,16 +30,47 @@ from __future__ import annotations
 
 import logging
 from calendar import monthrange
+from collections import defaultdict
 from datetime import date
 
 from app.services.analytics_client import AnalyticsClient
+from etl.transforms.appointments_field_derivations import (
+    derive_completion_rate,
+    derive_period_end,
+    derive_peak_slot,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _distinct_staff_counts_by_location_period(staff_rows: list[dict]) -> dict[tuple[int, str], int]:
+    """
+    Distinct staff_id per (location_id, period) from staff-breakdown rows.
+    Key (0, period) is org-wide distinct staff count for rollup monthly rows.
+    """
+    per_location: dict[tuple[int, str], set] = defaultdict(set)
+    org_wide: dict[str, set] = defaultdict(set)
+    for r in staff_rows:
+        p = str(r.get("period") or "")
+        sid = r.get("staff_id")
+        if sid is None:
+            continue
+        lid = int(r.get("location_id") or 0)
+        per_location[(lid, p)].add(sid)
+        org_wide[p].add(sid)
+    out: dict[tuple[int, str], int] = {k: len(v) for k, v in per_location.items()}
+    for period_key, sids in org_wide.items():
+        out[(0, period_key)] = len(sids)
+    return out
 
 
 class AppointmentsExtractor:
     """
     Pulls and transforms all appointments data for one tenant.
+
+    **Canonical appointments ETL for BI / RAG** (analytics API → ``wh_appt_*``).
+    Do not confuse with ``LegacyMysqlAppointmentMetricsExtractor`` in
+    ``etl.extractors.appointments`` (direct MySQL calendar/sign-in only).
 
     Parameters
     ----------
@@ -90,9 +121,15 @@ class AppointmentsExtractor:
             ),
         )
 
+        monthly_raw = derive_peak_slot(derive_period_end(monthly_raw))
+        staff_raw = derive_completion_rate(staff_raw)
+        service_raw = derive_peak_slot(service_raw)
+
+        staff_counts_map = _distinct_staff_counts_by_location_period(staff_raw)
+
         # ── 2. Transform each slice into warehouse documents ──────────────────
         docs: list[dict] = []
-        docs.extend(self._transform_monthly(business_id, monthly_raw))
+        docs.extend(self._transform_monthly(business_id, monthly_raw, staff_counts_map))
         docs.extend(self._transform_staff(business_id, staff_raw))
         docs.extend(self._transform_service(business_id, service_raw))
         docs.extend(self._transform_cross(business_id, cross_raw))
@@ -322,7 +359,12 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
     # Transform methods (unchanged from original)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _transform_monthly(self, business_id: int, rows: list[dict]) -> list[dict]:
+    def _transform_monthly(
+        self,
+        business_id: int,
+        rows: list[dict],
+        staff_counts_map: dict[tuple[int, str], int],
+    ) -> list[dict]:
         docs = []
         for row in rows:
             period      = row.get("period", "")
@@ -346,15 +388,24 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
             walkin      = row.get("walkin_count", 0) or 0
             app_book    = row.get("app_booking_count", 0) or 0
 
+            distinct_staff_count = staff_counts_map.get((int(location_id), str(period)), 0)
+
             slot_counts = {"morning": morning, "afternoon": afternoon, "evening": evening}
-            peak_slot   = max(slot_counts, key=slot_counts.get)
+            if "peak_slot" in row:
+                peak_slot = row["peak_slot"]
+            else:
+                peak_slot = (
+                    max(slot_counts, key=slot_counts.get)
+                    if any(slot_counts.values())
+                    else None
+                )
 
             if mom is None:
                 mom_text = "first period on record"
             elif mom > 0:
-                mom_text = f"up {mom:.1f}% vs previous period"
+                mom_text = f"up {mom:.2f}% vs previous period"
             elif mom < 0:
-                mom_text = f"down {abs(mom):.1f}% vs previous period"
+                mom_text = f"down {abs(mom):.2f}% vs previous period"
             else:
                 mom_text = "flat vs previous period"
 
@@ -367,8 +418,8 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
             text = (
                 f"Appointments — {loc_label} — {period}. "
                 f"Total booked: {total}. "
-                f"Completed: {completed}. Cancelled: {cancelled} ({cancel_rate:.1f}%). "
-                f"No-shows: {no_shows} ({no_show_rate:.1f}%). "
+                f"Completed: {completed}. Cancelled: {cancelled} ({cancel_rate:.2f}%). "
+                f"No-shows: {no_shows} ({no_show_rate:.2f}%). "
                 f"Booking trend: {mom_text}. "
                 f"Time slots: {morning} morning, {afternoon} afternoon, {evening} evening. "
                 f"Peak slot: {peak_slot}. Weekday: {weekday}, Weekend: {weekend}. "
@@ -379,6 +430,7 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
             docs.append({
                 "tenant_id": business_id, "doc_type": "appt_monthly_summary",
                 "domain": self.DOMAIN, "period": period,
+                "period_end": row.get("period_end"),
                 "location_id": location_id, "location_name": loc_name,
                 "location_city": loc_city, "is_rollup": is_rollup,
                 "total_booked": total, "confirmed_count": row.get("confirmed_count", 0) or 0,
@@ -390,6 +442,7 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
                 "weekday_count": weekday, "peak_slot": peak_slot,
                 "avg_actual_duration_min": avg_dur,
                 "walkin_count": walkin, "app_booking_count": app_book,
+                "distinct_staff_count": distinct_staff_count,
                 "text": text,
             })
         return docs
@@ -409,21 +462,24 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
             no_show_rate = row.get("no_show_rate_pct", 0.0) or 0.0
             services     = row.get("distinct_services_handled", 0) or 0
             mom          = row.get("mom_growth_pct")
-            completion_rate = round(completed / total * 100, 1) if total > 0 else 0.0
+            if row.get("completion_rate_pct") is not None:
+                completion_rate = float(row["completion_rate_pct"])
+            else:
+                completion_rate = round(completed / total * 100, 2) if total > 0 else 0.0
 
             if mom is None:
                 mom_text = "first period on record"
             elif mom > 5:
-                mom_text = f"growing — up {mom:.1f}% vs previous period"
+                mom_text = f"growing — up {mom:.2f}% vs previous period"
             elif mom < -5:
-                mom_text = f"declining — down {abs(mom):.1f}% vs previous period"
+                mom_text = f"declining — down {abs(mom):.2f}% vs previous period"
             else:
-                mom_text = f"stable ({mom:+.1f}% vs previous period)"
+                mom_text = f"stable ({mom:+.2f}% vs previous period)"
 
             text = (
                 f"Staff appointments — {staff_name} at {loc_name} — {period}. "
-                f"Total booked: {total}. Completed: {completed} ({completion_rate:.1f}%). "
-                f"Cancelled: {cancelled}. No-shows: {no_shows} ({no_show_rate:.1f}%). "
+                f"Total booked: {total}. Completed: {completed} ({completion_rate:.2f}%). "
+                f"Cancelled: {cancelled}. No-shows: {no_shows} ({no_show_rate:.2f}%). "
                 f"Booking trend: {mom_text}. "
                 f"Services handled: {services} distinct service type(s)."
             )
@@ -460,7 +516,14 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
             evening       = row.get("evening_count", 0) or 0
 
             slot_counts = {"morning": morning, "afternoon": afternoon, "evening": evening}
-            peak_slot   = max(slot_counts, key=slot_counts.get)
+            if "peak_slot" in row:
+                peak_slot = row["peak_slot"]
+            else:
+                peak_slot = (
+                    max(slot_counts, key=slot_counts.get)
+                    if any(slot_counts.values())
+                    else None
+                )
 
             if actual_dur and sched_dur:
                 dur_diff = actual_dur - sched_dur
@@ -485,7 +548,7 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
             text = (
                 f"Service appointments — {service_name} — {period}. "
                 f"Total booked: {total}. Completed: {completed}. "
-                f"Cancelled: {cancelled} ({cancel_rate:.1f}% cancellation rate). "
+                f"Cancelled: {cancelled} ({cancel_rate:.2f}% cancellation rate). "
                 f"Clients: {repeat_note}. Duration: {dur_note}. "
                 f"Peak booking slot: {peak_slot} "
                 f"({morning} morning, {afternoon} afternoon, {evening} evening)."
@@ -515,11 +578,11 @@ ON CONFLICT (business_id, staff_id, service_id, period_start) DO UPDATE SET
             service_name = row.get("service_name", "Unknown Service")
             total        = row.get("total_booked", 0) or 0
             completed    = row.get("completed_count", 0) or 0
-            completion_rate = round(completed / total * 100, 1) if total > 0 else 0.0
+            completion_rate = round(completed / total * 100, 2) if total > 0 else 0.0
 
             text = (
                 f"Staff-service appointments — {staff_name} performed {service_name} — {period}. "
-                f"Bookings: {total}. Completed: {completed} ({completion_rate:.1f}%)."
+                f"Bookings: {total}. Completed: {completed} ({completion_rate:.2f}%)."
             )
 
             docs.append({
