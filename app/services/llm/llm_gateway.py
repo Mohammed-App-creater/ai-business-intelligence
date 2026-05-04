@@ -36,6 +36,7 @@ import logging
 import os
 from typing import Optional, Union
 
+from app.core.config import Settings
 from .llm_client import LLMClient
 from .types import (
     LLMQuotaExceededError,
@@ -154,11 +155,12 @@ class LLMGateway:
 
         Environment variables
         ---------------------
-        LLM_PROVIDER       : "anthropic" (default) | "openai"
-        ANTHROPIC_API_KEY  : required when provider=anthropic
-        OPENAI_API_KEY     : required when provider=openai
-        LLM_TIMEOUT        : float seconds (default 7.0)
-        LLM_MAX_RETRIES    : int (default 3)
+        LLM_PROVIDER                 : "anthropic" (default) | "openai"
+        ANTHROPIC_API_KEY            : required when provider=anthropic
+        OPENAI_API_KEY               : required when provider=openai
+        LLM_REQUEST_TIMEOUT_SECONDS  : float seconds, per-attempt (default 7.0)
+        LLM_TIMEOUT                  : DEPRECATED — alias for LLM_REQUEST_TIMEOUT_SECONDS
+        LLM_MAX_RETRIES              : retries after the initial attempt (default 2)
         """
         provider_name = os.getenv("LLM_PROVIDER", "anthropic").lower()
 
@@ -170,8 +172,19 @@ class LLMGateway:
                 f"Valid values: {[p.value for p in Provider]}"
             )
 
-        timeout     = float(os.getenv("LLM_TIMEOUT", "7.0"))
-        max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+        # Re-instantiate Settings to pick up env vars set after module import
+        # (matches monkeypatch.setenv pattern in tests).
+        fresh = Settings()
+        if fresh.LLM_TIMEOUT is not None:
+            logger.warning(
+                "LLM_TIMEOUT is deprecated; use LLM_REQUEST_TIMEOUT_SECONDS instead "
+                "(legacy value=%s, see AI_BI_Architecture_v1.1 §5.7).",
+                fresh.LLM_TIMEOUT,
+            )
+            timeout = fresh.LLM_TIMEOUT
+        else:
+            timeout = fresh.LLM_REQUEST_TIMEOUT_SECONDS
+        max_retries = int(os.getenv("LLM_MAX_RETRIES", "2"))
 
         if provider == Provider.ANTHROPIC:
             from .anthropic_provider import AnthropicProvider

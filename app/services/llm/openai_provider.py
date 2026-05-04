@@ -8,11 +8,14 @@ Differences from Anthropic handled here (not in the client):
   - Native JSON via response_format={"type": "json_object"} (supports_native_json=True)
   - Token fields are `prompt_tokens` / `completion_tokens` inside `usage`
   - Rate limit = HTTP 429 with RateLimitError from SDK
+
+SDK retries are disabled (max_retries=0) — the LLMClient owns retry policy.
 """
 from __future__ import annotations
 
 import logging
 import time
+from typing import Optional
 
 import openai
 
@@ -23,6 +26,8 @@ from .types import (
     LLMRateLimitError,
     LLMRequest,
     LLMResponse,
+    LLMTimeoutError,
+    LLMTransientError,
     OutputMode,
     Provider,
     TokenUsage,
@@ -41,7 +46,8 @@ class OpenAIProvider:
 
     def __init__(self, api_key: str | None = None) -> None:
         self._client = openai.AsyncOpenAI(
-            **({"api_key": api_key} if api_key else {})
+            max_retries=0,  # LLMClient is the single source of retry truth
+            **({"api_key": api_key} if api_key else {}),
         )
 
     # ------------------------------------------------------------------
@@ -90,13 +96,34 @@ class OpenAIProvider:
         try:
             response = await self._client.chat.completions.create(**kwargs)
         except openai.RateLimitError as exc:
-            raise LLMRateLimitError(f"OpenAI rate limit: {exc}") from exc
+            raise LLMRateLimitError(
+                f"OpenAI rate limit: {exc}",
+                retry_after_seconds=_extract_retry_after(exc),
+            ) from exc
+        except openai.APITimeoutError as exc:
+            raise LLMTimeoutError(f"OpenAI timeout: {exc}") from exc
+        except openai.APIConnectionError as exc:
+            # APITimeoutError subclasses this — order matters.
+            raise LLMTransientError(f"OpenAI connection error: {exc}") from exc
+        except openai.InternalServerError as exc:
+            raise LLMTransientError(
+                f"OpenAI 5xx: {exc.status_code} {exc.message}",
+                retry_after_seconds=_extract_retry_after(exc),
+            ) from exc
+        except (
+            openai.BadRequestError,
+            openai.AuthenticationError,
+            openai.PermissionDeniedError,
+            openai.NotFoundError,
+        ) as exc:
+            # Bugs in our request — retrying would just hide the real problem.
+            raise LLMProviderError(
+                f"OpenAI non-retryable {exc.status_code}: {exc.message}"
+            ) from exc
         except openai.APIStatusError as exc:
             raise LLMProviderError(
                 f"OpenAI API error {exc.status_code}: {exc.message}"
             ) from exc
-        except openai.APIConnectionError as exc:
-            raise LLMProviderError(f"OpenAI connection error: {exc}") from exc
 
         latency_ms = (time.perf_counter() - t0) * 1000
         content    = response.choices[0].message.content or ""
@@ -147,3 +174,25 @@ class OpenAIProvider:
                 f"Invalid JSON from OpenAI: {exc}",
                 raw_content=content,
             ) from exc
+
+
+def _extract_retry_after(exc: Exception) -> Optional[float]:
+    """
+    Extract the Retry-After header from an SDK exception's response.
+
+    Returns seconds as float, or None if absent / unparseable / HTTP-date format.
+    """
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if headers is None:
+        return None
+    try:
+        raw = headers.get("retry-after") or headers.get("Retry-After")
+    except (AttributeError, TypeError):
+        return None
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None

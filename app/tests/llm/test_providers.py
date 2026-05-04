@@ -19,7 +19,8 @@ import pytest
 
 from app.services.llm.types import (
     LLMJsonParseError, LLMProviderError, LLMRateLimitError,
-    LLMRequest, OutputMode, Provider, UseCase,
+    LLMRequest, LLMTimeoutError, LLMTransientError,
+    OutputMode, Provider, UseCase,
 )
 
 
@@ -280,3 +281,193 @@ class TestOpenAIProvider:
     def test_provider_name(self):
         from app.services.llm.openai_provider import OpenAIProvider
         assert OpenAIProvider(api_key="test").provider_name == "openai"
+
+
+# ---------------------------------------------------------------------------
+# P1–P6: spec-mandated regression guards for the new exception taxonomy.
+# Verifies providers translate transient SDK errors to retryable types and
+# disable SDK-level retries.
+# ---------------------------------------------------------------------------
+
+class TestAnthropicExceptionTranslation:
+
+    @staticmethod
+    def _make_response_with_headers(status_code: int, headers: dict | None = None):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.headers = headers or {}
+        return resp
+
+    # --- P1 -----------------------------------------------------------------
+    async def test_P1_rate_limit_extracts_retry_after_header(self):
+        import anthropic as sdk
+        from app.services.llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="test")
+        resp = self._make_response_with_headers(429, {"retry-after": "5"})
+        provider._client.messages.create = AsyncMock(
+            side_effect=sdk.RateLimitError(message="429", response=resp, body={})
+        )
+        with pytest.raises(LLMRateLimitError) as exc_info:
+            await provider.complete(_make_request())
+        assert exc_info.value.retry_after_seconds == 5.0
+
+    # --- P2 -----------------------------------------------------------------
+    async def test_P2_api_connection_error_to_transient(self):
+        import anthropic as sdk
+        from app.services.llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="test")
+        provider._client.messages.create = AsyncMock(
+            side_effect=sdk.APIConnectionError(request=MagicMock())
+        )
+        with pytest.raises(LLMTransientError):
+            await provider.complete(_make_request())
+
+    # --- P3 -----------------------------------------------------------------
+    async def test_P3_api_timeout_error_to_llm_timeout(self):
+        import anthropic as sdk
+        from app.services.llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="test")
+        provider._client.messages.create = AsyncMock(
+            side_effect=sdk.APITimeoutError(request=MagicMock())
+        )
+        with pytest.raises(LLMTimeoutError):
+            await provider.complete(_make_request())
+
+    # --- P4 -----------------------------------------------------------------
+    async def test_P4_internal_server_error_to_transient(self):
+        import anthropic as sdk
+        from app.services.llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="test")
+        resp = self._make_response_with_headers(500)
+        provider._client.messages.create = AsyncMock(
+            side_effect=sdk.InternalServerError(
+                message="boom", response=resp, body={}
+            )
+        )
+        with pytest.raises(LLMTransientError):
+            await provider.complete(_make_request())
+
+    # --- P5 -----------------------------------------------------------------
+    async def test_P5_bad_request_remains_provider_error(self):
+        import anthropic as sdk
+        from app.services.llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="test")
+        resp = self._make_response_with_headers(400)
+        provider._client.messages.create = AsyncMock(
+            side_effect=sdk.BadRequestError(
+                message="bad", response=resp, body={}
+            )
+        )
+        with pytest.raises(LLMProviderError):
+            await provider.complete(_make_request())
+
+    # --- P6 -----------------------------------------------------------------
+    def test_P6_sdk_constructed_with_no_retries(self):
+        from app.services.llm.anthropic_provider import AnthropicProvider
+        provider = AnthropicProvider(api_key="test")
+        assert provider._client.max_retries == 0
+
+    # --- Bonus: 529 overloaded is treated as rate-limit ----------------------
+    async def test_overloaded_529_treated_as_rate_limit(self):
+        import anthropic as sdk
+        from app.services.llm.anthropic_provider import AnthropicProvider
+
+        provider = AnthropicProvider(api_key="test")
+        resp = self._make_response_with_headers(529, {"retry-after": "10"})
+        provider._client.messages.create = AsyncMock(
+            side_effect=sdk.APIStatusError(
+                message="overloaded", response=resp, body={}
+            )
+        )
+        with pytest.raises(LLMRateLimitError) as exc_info:
+            await provider.complete(_make_request())
+        assert exc_info.value.retry_after_seconds == 10.0
+
+
+class TestOpenAIExceptionTranslation:
+
+    @staticmethod
+    def _make_response_with_headers(status_code: int, headers: dict | None = None):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.headers = headers or {}
+        return resp
+
+    # --- P1 -----------------------------------------------------------------
+    async def test_P1_rate_limit_extracts_retry_after_header(self):
+        import openai as sdk
+        from app.services.llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test")
+        resp = self._make_response_with_headers(429, {"retry-after": "5"})
+        provider._client.chat.completions.create = AsyncMock(
+            side_effect=sdk.RateLimitError(message="429", response=resp, body={})
+        )
+        with pytest.raises(LLMRateLimitError) as exc_info:
+            await provider.complete(_make_request())
+        assert exc_info.value.retry_after_seconds == 5.0
+
+    # --- P2 -----------------------------------------------------------------
+    async def test_P2_api_connection_error_to_transient(self):
+        import openai as sdk
+        from app.services.llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test")
+        provider._client.chat.completions.create = AsyncMock(
+            side_effect=sdk.APIConnectionError(request=MagicMock())
+        )
+        with pytest.raises(LLMTransientError):
+            await provider.complete(_make_request())
+
+    # --- P3 -----------------------------------------------------------------
+    async def test_P3_api_timeout_error_to_llm_timeout(self):
+        import openai as sdk
+        from app.services.llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test")
+        provider._client.chat.completions.create = AsyncMock(
+            side_effect=sdk.APITimeoutError(request=MagicMock())
+        )
+        with pytest.raises(LLMTimeoutError):
+            await provider.complete(_make_request())
+
+    # --- P4 -----------------------------------------------------------------
+    async def test_P4_internal_server_error_to_transient(self):
+        import openai as sdk
+        from app.services.llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test")
+        resp = self._make_response_with_headers(500)
+        provider._client.chat.completions.create = AsyncMock(
+            side_effect=sdk.InternalServerError(
+                message="boom", response=resp, body={}
+            )
+        )
+        with pytest.raises(LLMTransientError):
+            await provider.complete(_make_request())
+
+    # --- P5 -----------------------------------------------------------------
+    async def test_P5_bad_request_remains_provider_error(self):
+        import openai as sdk
+        from app.services.llm.openai_provider import OpenAIProvider
+
+        provider = OpenAIProvider(api_key="test")
+        resp = self._make_response_with_headers(400)
+        provider._client.chat.completions.create = AsyncMock(
+            side_effect=sdk.BadRequestError(
+                message="bad", response=resp, body={}
+            )
+        )
+        with pytest.raises(LLMProviderError):
+            await provider.complete(_make_request())
+
+    # --- P6 -----------------------------------------------------------------
+    def test_P6_sdk_constructed_with_no_retries(self):
+        from app.services.llm.openai_provider import OpenAIProvider
+        provider = OpenAIProvider(api_key="test")
+        assert provider._client.max_retries == 0

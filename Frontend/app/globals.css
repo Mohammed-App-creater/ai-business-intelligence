@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  height: 100%;
+  background-color: #0d0d0d;
+  color: #ededed;
+  font-feature-settings: "cv11", "ss01";
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
+
+/* Markdown styles inside assistant messages */
+.prose-leo {
+  line-height: 1.65;
+}
+.prose-leo p { margin: 0.5rem 0; }
+.prose-leo ul { list-style: disc; padding-left: 1.25rem; margin: 0.5rem 0; }
+.prose-leo ol { list-style: decimal; padding-left: 1.25rem; margin: 0.5rem 0; }
+.prose-leo li { margin: 0.2rem 0; }
+.prose-leo h1, .prose-leo h2, .prose-leo h3 {
+  font-weight: 600;
+  margin: 0.8rem 0 0.4rem;
+}
+.prose-leo h1 { font-size: 1.25rem; }
+.prose-leo h2 { font-size: 1.1rem; }
+.prose-leo h3 { font-size: 1rem; }
+.prose-leo code {
+  background: #1f1f1f;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.9em;
+}
+.prose-leo pre {
+  background: #1a1a1a;
+  border: 1px solid #262626;
+  border-radius: 8px;
+  padding: 0.75rem;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+.prose-leo pre code {
+  background: transparent;
+  padding: 0;
+}
+.prose-leo table {
+  border-collapse: collapse;
+  margin: 0.5rem 0;
+}
+.prose-leo th, .prose-leo td {
+  border: 1px solid #2a2a2a;
+  padding: 0.35rem 0.6rem;
+}
+.prose-leo blockquote {
+  border-left: 3px solid #2a2a2a;
+  padding-left: 0.75rem;
+  color: #b8b8b8;
+}
+
+@keyframes pulseDot {
+  0%, 80%, 100% { opacity: 0.3; }
+  40% { opacity: 1; }
+}
+.typing-dot {
+  animation: pulseDot 1.4s infinite both;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
