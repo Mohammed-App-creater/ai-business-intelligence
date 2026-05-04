@@ -18,9 +18,9 @@ POST http://localhost:8000/api/v1/chat
 Content-Type: application/json
 
 {
-  "org_id": "42",
-  "business_id": "42",
-  "question": "Which employee has the highest no-show rate?"
+  "org_id": "40",
+  "business_id": "40",
+  "question": "How many appointments did Maria Lopez complete last month?"
 }
 
 
